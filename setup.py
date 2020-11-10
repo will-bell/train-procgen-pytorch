@@ -15,5 +15,5 @@ setup(
     python_requires='>=3.5, <4',
 
     # https://packaging.python.org/en/latest/requirements.html
-    install_requires=['pandas', 'pyyaml', 'torch', 'numpy', 'gym'],
+    install_requires=['pandas', 'pyyaml', 'torch', 'numpy', 'gym', 'procgen'],
 )

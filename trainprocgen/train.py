@@ -1,19 +1,15 @@
 import argparse
-import os
 import random
-import time
 
-import gym
-import torch
 import yaml
 from procgen import ProcgenEnv
 
-from common import set_global_seeds, set_global_log_levels
-from common.env.procgen_wrappers import *
-from common.logger import Logger
-from common.model import NatureModel, ImpalaModel
-from common.policy import CategoricalPolicy
-from common.storage import Storage
+from trainprocgen.common import set_global_seeds, set_global_log_levels
+from trainprocgen.common.env.procgen_wrappers import *
+from trainprocgen.common.logger import Logger
+from trainprocgen.common.model import NatureModel, ImpalaModel
+from trainprocgen.common.policy import CategoricalPolicy
+from trainprocgen.common.storage import Storage
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -48,7 +44,7 @@ if __name__ == '__main__':
     set_global_log_levels(log_level)
 
     ####################
-    ## HYPERPARAMETERS #
+    #  HYPERPARAMETERS #
     ####################
     print('[LOADING HYPERPARAMETERS...]')
     with open('hyperparams/procgen/config.yml', 'r') as f:
@@ -57,13 +53,13 @@ if __name__ == '__main__':
         print(key, ':', value)
 
     ############
-    ## DEVICE ##
+    #  DEVICE  #
     ############
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_device)
     device = torch.device('cuda')
 
     #################
-    ## ENVIRONMENT ##
+    #  ENVIRONMENT  #
     #################
     print('INITIALIZAING ENVIRONMENTS...')
     n_steps = hyperparameters.get('n_steps', 256)
@@ -79,12 +75,12 @@ if __name__ == '__main__':
     normalize_rew = hyperparameters.get('normalize_rew', True)
     env = VecExtractDictObs(env, "rgb")
     if normalize_rew:
-        env = VecNormalize(env, ob=False) # normalizing returns, but not the img frames.
+        env = VecNormalize(env, ob=False)  # normalizing returns, but not the img frames.
     env = TransposeFrame(env)
     env = ScaledFloatFrame(env)
 
     ############
-    ## LOGGER ##
+    #  LOGGER  #
     ############
     print('INITIALIZAING LOGGER...')
     logdir = 'procgen/' + env_name + '/' + exp_name + '/' + 'seed' + '_' + \
@@ -95,7 +91,7 @@ if __name__ == '__main__':
     logger = Logger(n_envs, logdir)
 
     ###########
-    ## MODEL ##
+    #  MODEL  #
     ###########
     print('INTIALIZING MODEL...')
     observation_space = env.observation_space
@@ -122,25 +118,25 @@ if __name__ == '__main__':
     policy.to(device)
 
     #############
-    ## STORAGE ##
+    #  STORAGE  #
     #############
     print('INITIALIZAING STORAGE...')
     hidden_state_dim = model.output_dim
     storage = Storage(observation_shape, hidden_state_dim, n_steps, n_envs, device)
 
     ###########
-    ## AGENT ##
+    #  AGENT  #
     ###########
     print('INTIALIZING AGENT...')
     algo = hyperparameters.get('algo', 'ppo')
     if algo == 'ppo':
-        from agents.ppo import PPO as AGENT
+        from trainprocgen.agents.ppo import PPO as AGENT
     else:
         raise NotImplementedError
     agent = AGENT(env, policy, logger, storage, device, num_checkpoints, **hyperparameters)
 
     ##############
-    ## TRAINING ##
+    #  TRAINING  #
     ##############
     print('START TRAINING...')
     agent.train(num_timesteps)

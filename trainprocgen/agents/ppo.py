@@ -72,8 +72,7 @@ class PPO(BaseAgent):
         self.policy.train()
         for e in range(self.epoch):
             recurrent = self.policy.is_recurrent()
-            generator = self.storage.fetch_train_generator(mini_batch_size=self.mini_batch_size,
-                                                           recurrent=recurrent)
+            generator = self.storage.fetch_train_generator(mini_batch_size=self.mini_batch_size, recurrent=recurrent)
             for sample in generator:
                 obs_batch, hidden_state_batch, act_batch, done_batch, \
                     old_log_prob_act_batch, old_value_batch, return_batch, adv_batch = sample
@@ -112,6 +111,7 @@ class PPO(BaseAgent):
         summary = {'Loss/pi': np.mean(pi_loss_list),
                    'Loss/v': np.mean(value_loss_list),
                    'Loss/entropy': np.mean(entropy_loss_list)}
+
         return summary
 
     def train(self, num_timesteps: int):
