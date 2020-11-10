@@ -4,6 +4,7 @@ Implementation of ADR (https://arxiv.org/pdf/1910.07113.pdf)
 
 import torch
 
+MAX_SIZE_BUFFER = 1
 
 class ADRParameter:
     """ Phi_L or Phi_H in the literature (section 5.2)
@@ -13,18 +14,16 @@ class ADRParameter:
             delta (float): delta value to perturb phi when performance exceeds threshold
             boundaries (dict): keys = {'lower_bound', 'upper_bound'}
     """
-    def __init__(self, value: float, delta: float, boundaries: dict):
-        """
-
-
-        """
+    def __init__(self, value: float, delta: float, boundaries: dict,  thresh_low: float, thresh_high: float):
         self.value = value
         self.delta = delta #some delta to perturb Phi 
         self.boundaries = boundaries
+        self.thresh_low = thresh_low
+        self.thresh_high = thresh_high
         # Each parameter has a buffer, which the performance will be averaged over
         # after its length reaches max_size_buffer
         self.performance_buffer = []
-        self.max_size_buffer = 240 # The papers default value, might be a hyper parameter to tune later
+        self.max_size_buffer = MAX_SIZE_BUFFER # The papers default value is 240
         
         
     def return_val(self):
@@ -43,7 +42,7 @@ class ADRParameter:
         if len(self.performance_buffer) >= self.max_size_buffer:
             self.reach_max_buffer()
         
-    def reach_max_buffer(self, thresh_low: float, thresh_high: float):
+    def reach_max_buffer(self):
         """When buffer is at length = self.max_size_buffer,
             calculate average performance values and check against thresholds.
             
@@ -55,9 +54,9 @@ class ADRParameter:
         performance_average = torch.mean(torch.tensor(self.performance_buffer))
         self.performance_buffer = []
 
-        if performance_average >= thresh_high:
+        if performance_average >= self.thresh_high:
             self.value = self.value + self.delta
-        elif performance_average <= thresh_low:
+        elif performance_average <= self.thresh_low:
             self.value = self.value - self.delta
         
         # print('--------Test Clipping--------')
@@ -79,7 +78,7 @@ class ADREnvParameter:
         delta (float): determines how much phi changes
     """
     
-    def __init__(self, value:float, lower_bound: float, upper_bound: float, delta: float):
+    def __init__(self, value:float, lower_bound: float, upper_bound: float, delta: float,  thresh_low: float, thresh_high: float):
 
         self.value = value
         self.lower_bound = lower_bound
@@ -92,8 +91,8 @@ class ADREnvParameter:
         boundary_left  = dict(lower_bound = self.lower_bound, upper_bound = self.value)
         boundary_right = dict(lower_bound = self.value, upper_bound = self.upper_bound)
 
-        self.phi_l = ADRParameter(self.value, delta, boundaries = boundary_left) # low
-        self.phi_h = ADRParameter(self.value, delta, boundaries = boundary_right) # high
+        self.phi_l = ADRParameter(self.value, delta, boundaries = boundary_left, thresh_low=thresh_low, thresh_high=thresh_high) # low
+        self.phi_h = ADRParameter(self.value, delta, boundaries = boundary_right, thresh_low=thresh_low, thresh_high=thresh_high) # high
     
     def set_adr_flag(self, flag: bool):
         self.adr_flag = flag
@@ -117,7 +116,7 @@ class ADREnvParameter:
             lam = self.phi_l
         else:
             print('upper bound sample')
-            lam = self.phi_r
+            lam = self.phi_h
         print('boundary sample: ', lam.return_val())
         return lam
             
@@ -138,13 +137,38 @@ class ADREnvParameter:
         pass
     
 
+def adr_entrophy(env_parameters: list):
+    d = len(env_parameters)
+    phi_H = []
+    phi_L = []
+    
+    for i in range(d):
+        phi_H.append(env_parameters[i].phi_h.return_val())
+        phi_L.append(env_parameters[i].phi_l.return_val())
+    
+    phi_H = torch.tensor(phi_H, dtype=torch.float)
+    phi_L = torch.tensor(phi_L, dtype=torch.float)
+    
+    entrophy = torch.mean(torch.log(phi_H - phi_L))
+    return entrophy
 
 if __name__ == "__main__":
     torch.manual_seed(0)
     
-    param = ADREnvParameter(value=7, lower_bound=5, upper_bound=10, delta=0.5)
-    lam = param.boundary_sample()
+    param1 = ADREnvParameter(value=7, lower_bound=1, upper_bound=100, delta=0.5, thresh_low = 0, thresh_high=10)
+    lam = param1.boundary_sample()
+    lam.append_performance(-1.0)
+    print(param1.phi_h.return_val(), param1.phi_l.return_val())
     
-    # lam.value=2
-    # print(param.phi_l.value)
-    # lam.reach_max_buffer(30,50)
+    param2 = ADREnvParameter(value=8, lower_bound=1, upper_bound=100, delta=1, thresh_low = 0, thresh_high=10)
+    lam = param2.boundary_sample()
+    lam.append_performance(999.0)
+    print(param2.phi_h.return_val(), param2.phi_l.return_val())
+
+    param3 = ADREnvParameter(value=9, lower_bound=1, upper_bound=100, delta=0.5, thresh_low = 0, thresh_high=10)
+    lam = param3.boundary_sample()
+    lam.append_performance(-1.0)
+    print(param3.phi_h.return_val(), param3.phi_l.return_val())
+
+    entrophy = adr_entrophy([param1, param2, param3])
+    print(entrophy)
