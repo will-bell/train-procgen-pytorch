@@ -37,7 +37,7 @@ class TestEntrophyMethod(unittest.TestCase):
         # print(entrophy)
         
         # d = 3
-        # 1/d \sum_{1}^{3} log(phi_h - phi_l)
+        # 1/d \sum_{i=1}^{d} log(phi_ih - phi_il)
         assert entrophy == (torch.log(torch.tensor(0.5)) + 
                             torch.log(torch.tensor(1.0)) + 
                             torch.log(torch.tensor(0.5))) / 3

@@ -138,6 +138,14 @@ class ADREnvParameter:
     
 
 def adr_entrophy(env_parameters: list):
+    """ Calculate ADR Entrophy
+
+    Args:
+        env_parameters (list <ADREnvParameter>): List of all environment parameters
+
+    Returns:
+        float: entrophy =  1/d \sum_{i=1}^{d} log(phi_ih - phi_il)
+    """
     d = len(env_parameters)
     phi_H = []
     phi_L = []
