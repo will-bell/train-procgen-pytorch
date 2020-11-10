@@ -1,9 +1,11 @@
-import torch
-from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
-import numpy as np
 from collections import deque
 
-class Storage():
+import numpy as np
+import torch
+from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
+
+
+class Storage:
 
     def __init__(self, obs_shape, hidden_state_size, num_steps, num_envs, device):
         self.obs_shape = obs_shape
@@ -12,6 +14,10 @@ class Storage():
         self.num_envs = num_envs
         self.device = device
         self.reset()
+
+        self.obs_batch, self.hidden_states_batch, self.act_batch, self.rew_batch, self.done_batch, \
+            self.log_prob_act_batch, self.value_batch, self.return_batch, self.adv_batch, self.info_batch, self.step \
+            = None, None, None, None, None, None, None, None, None, None, None
 
     def reset(self):
         self.obs_batch = torch.zeros(self.num_steps+1, self.num_envs, *self.obs_shape)
@@ -68,26 +74,27 @@ class Storage():
         if normalize_adv:
             self.adv_batch = (self.adv_batch - torch.mean(self.adv_batch)) / (torch.std(self.adv_batch) + 1e-8)
 
-
     def fetch_train_generator(self, mini_batch_size=None, recurrent=False):
         batch_size = self.num_steps * self.num_envs
         if mini_batch_size is None:
             mini_batch_size = batch_size
         # If agent's policy is not recurrent, data could be sampled without considering the time-horizon
         if not recurrent:
-            sampler = BatchSampler(SubsetRandomSampler(range(batch_size)),
-                                   mini_batch_size,
-                                   drop_last=True)
+            sampler = BatchSampler(SubsetRandomSampler(range(batch_size)), mini_batch_size, drop_last=True)
             for indices in sampler:
                 obs_batch = torch.FloatTensor(self.obs_batch[:-1]).reshape(-1, *self.obs_shape)[indices].to(self.device)
-                hidden_state_batch = torch.FloatTensor(self.hidden_states_batch[:-1]).reshape(-1, self.hidden_state_size).to(self.device)
+                hidden_state_batch = torch.FloatTensor(self.hidden_states_batch[:-1])\
+                    .reshape(-1, self.hidden_state_size).to(self.device)
                 act_batch = torch.FloatTensor(self.act_batch).reshape(-1)[indices].to(self.device)
                 done_batch = torch.FloatTensor(self.done_batch).reshape(-1)[indices].to(self.device)
                 log_prob_act_batch = torch.FloatTensor(self.log_prob_act_batch).reshape(-1)[indices].to(self.device)
                 value_batch = torch.FloatTensor(self.value_batch[:-1]).reshape(-1)[indices].to(self.device)
                 return_batch = torch.FloatTensor(self.return_batch).reshape(-1)[indices].to(self.device)
                 adv_batch = torch.FloatTensor(self.adv_batch).reshape(-1)[indices].to(self.device)
-                yield obs_batch, hidden_state_batch, act_batch, done_batch, log_prob_act_batch, value_batch, return_batch, adv_batch
+
+                yield obs_batch, hidden_state_batch, act_batch, done_batch, log_prob_act_batch, value_batch, \
+                    return_batch, adv_batch
+
         # If agent's policy is recurrent, data should be sampled along the time-horizon
         else:
             num_mini_batch_per_epoch = batch_size // mini_batch_size
@@ -97,14 +104,17 @@ class Storage():
                 idxes = perm[start_ind:start_ind+num_envs_per_batch]
                 obs_batch = torch.FloatTensor(self.obs_batch[:-1, idxes]).reshape(-1, *self.obs_shape).to(self.device)
                 # [0:1] instead of [0] to keep two-dimensional array
-                hidden_state_batch = torch.FloatTensor(self.hidden_states_batch[0:1, idxes]).reshape(-1, self.hidden_state_size).to(self.device)
+                hidden_state_batch = torch.FloatTensor(self.hidden_states_batch[0:1, idxes])\
+                    .reshape(-1, self.hidden_state_size).to(self.device)
                 act_batch = torch.FloatTensor(self.act_batch[:, idxes]).reshape(-1).to(self.device)
                 done_batch = torch.FloatTensor(self.done_batch[:, idxes]).reshape(-1).to(self.device)
                 log_prob_act_batch = torch.FloatTensor(self.log_prob_act_batch[:, idxes]).reshape(-1).to(self.device)
                 value_batch = torch.FloatTensor(self.value_batch[:-1, idxes]).reshape(-1).to(self.device)
                 return_batch = torch.FloatTensor(self.return_batch[:, idxes]).reshape(-1).to(self.device)
                 adv_batch = torch.FloatTensor(self.adv_batch[:, idxes]).reshape(-1).to(self.device)
-                yield obs_batch, hidden_state_batch, act_batch, done_batch, log_prob_act_batch, value_batch, return_batch, adv_batch
+
+                yield obs_batch, hidden_state_batch, act_batch, done_batch, log_prob_act_batch, value_batch, \
+                    return_batch, adv_batch
 
     def fetch_log_data(self):
         if 'env_reward' in self.info_batch[0][0]:
@@ -115,6 +125,7 @@ class Storage():
             rew_batch = np.array(rew_batch)
         else:
             rew_batch = self.rew_batch.numpy()
+
         if 'env_done' in self.info_batch[0][0]:
             done_batch = []
             for step in range(self.num_steps):
@@ -123,4 +134,5 @@ class Storage():
             done_batch = np.array(done_batch)
         else:
             done_batch = self.done_batch.numpy()
+
         return rew_batch, done_batch

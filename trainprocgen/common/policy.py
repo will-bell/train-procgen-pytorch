@@ -1,8 +1,10 @@
-from .misc_util import orthogonal_init
-from .model import GRU
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical, Normal
+from torch.distributions import Categorical
+
+from .misc_util import orthogonal_init
+from .model import GRU
+
 
 class CategoricalPolicy(nn.Module):
     def __init__(self, 

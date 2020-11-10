@@ -1,4 +1,5 @@
-import torch
+from abc import abstractmethod
+
 
 class BaseAgent(object):
     """
@@ -24,20 +25,23 @@ class BaseAgent(object):
         self.num_checkpoints = num_checkpoints
         
         self.t = 0
-        
-    def predict(self, obs):
+
+    @abstractmethod
+    def predict(self, obs, hidden_state, done):
         """
         Predict the action with the given input 
         """
         pass
-        
+
+    @abstractmethod
     def update_policy(self):
         """
         Train the neural network model
         """
         pass
-        
-    def train(self, num_timesteps):
+
+    @abstractmethod
+    def train(self, num_timesteps: int):
         """
         Train the agent with collecting the trajectories
         """

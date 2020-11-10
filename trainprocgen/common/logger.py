@@ -1,8 +1,10 @@
+import time
+from collections import deque
+
 import numpy as np
 import pandas as pd
-from collections import deque
 from torch.utils.tensorboard import SummaryWriter
-import time
+
 
 class Logger(object):
     
@@ -14,12 +16,12 @@ class Logger(object):
         self.episode_rewards = []
         for _ in range(n_envs):
             self.episode_rewards.append([])
-        self.episode_len_buffer = deque(maxlen = 40)
-        self.episode_reward_buffer = deque(maxlen = 40)
+        self.episode_len_buffer = deque(maxlen=40)
+        self.episode_reward_buffer = deque(maxlen=40)
         
-        self.log = pd.DataFrame(columns = ['timesteps', 'wall_time', 'num_episodes',
-                               'max_episode_rewards', 'mean_episode_rewards','min_episode_rewards',
-                               'max_episode_len', 'mean_episode_len', 'min_episode_len'])
+        self.log = pd.DataFrame(columns=['timesteps', 'wall_time', 'num_episodes', 'max_episode_rewards',
+                                         'mean_episode_rewards', 'min_episode_rewards', 'max_episode_len',
+                                         'mean_episode_len', 'min_episode_len'])
         self.writer = SummaryWriter(logdir)
         self.timesteps = 0
         self.num_episodes = 0
@@ -57,15 +59,17 @@ class Logger(object):
 
         # TODO: logger to append, not write!
         with open(self.logdir + '/log.csv', 'w') as f:
-            self.log.to_csv(f, index = False)
+            self.log.to_csv(f, index=False)
         print(self.log.loc[len(self.log)-1])
 
     def _get_episode_statistics(self):
-        episode_statistics = {}
-        episode_statistics['Rewards/max_episodes']  = np.max(self.episode_reward_buffer)
-        episode_statistics['Rewards/mean_episodes'] = np.mean(self.episode_reward_buffer)
-        episode_statistics['Rewards/min_episodes']  = np.min(self.episode_reward_buffer)
-        episode_statistics['Len/max_episodes']  = np.max(self.episode_len_buffer)
-        episode_statistics['Len/mean_episodes'] = np.mean(self.episode_len_buffer)
-        episode_statistics['Len/min_episodes']  = np.min(self.episode_len_buffer)
+        episode_statistics = {
+            'Rewards/max_episodes': np.max(self.episode_reward_buffer),
+            'Rewards/mean_episodes': np.mean(self.episode_reward_buffer),
+            'Rewards/min_episodes': np.min(self.episode_reward_buffer),
+            'Len/max_episodes': np.max(self.episode_len_buffer),
+            'Len/mean_episodes': np.mean(self.episode_len_buffer),
+            'Len/min_episodes': np.min(self.episode_len_buffer)
+        }
+
         return episode_statistics

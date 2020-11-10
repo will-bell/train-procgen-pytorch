@@ -1,8 +1,9 @@
-from .base_agent import BaseAgent
-from common.misc_util import adjust_lr, get_n_params
+import numpy as np
 import torch
 import torch.optim as optim
-import numpy as np
+
+from common.misc_util import adjust_lr
+from .base_agent import BaseAgent
 
 
 class PPO(BaseAgent):
@@ -60,7 +61,7 @@ class PPO(BaseAgent):
 
         return act.cpu().numpy(), log_prob_act.cpu().numpy(), value.cpu().numpy(), hidden_state.cpu().numpy()
 
-    def optimize(self):
+    def update_policy(self):
         pi_loss_list, value_loss_list, entropy_loss_list = [], [], []
         batch_size = self.n_steps * self.n_envs // self.mini_batch_per_epoch
         if batch_size < self.mini_batch_size:
@@ -87,7 +88,8 @@ class PPO(BaseAgent):
                 pi_loss = -torch.min(surr1, surr2).mean()
 
                 # Clipped Bellman-Error
-                clipped_value_batch = old_value_batch + (value_batch - old_value_batch).clamp(-self.eps_clip, self.eps_clip)
+                clipped_value_batch = old_value_batch + (value_batch - old_value_batch)\
+                    .clamp(-self.eps_clip, self.eps_clip)
                 v_surr1 = (value_batch - return_batch).pow(2)
                 v_surr2 = (clipped_value_batch - return_batch).pow(2)
                 value_loss = 0.5 * torch.max(v_surr1, v_surr2).mean()
@@ -112,7 +114,7 @@ class PPO(BaseAgent):
                    'Loss/entropy': np.mean(entropy_loss_list)}
         return summary
 
-    def train(self, num_timesteps):
+    def train(self, num_timesteps: int):
         save_every = num_timesteps // self.num_checkpoints
         checkpoint_cnt = 0
         obs = self.env.reset()
@@ -130,11 +132,13 @@ class PPO(BaseAgent):
                 hidden_state = next_hidden_state
             _, _, last_val, hidden_state = self.predict(obs, hidden_state, done)
             self.storage.store_last(obs, hidden_state, last_val)
+
             # Compute advantage estimates
             self.storage.compute_estimates(self.gamma, self.lmbda, self.use_gae, self.normalize_adv)
 
-            # Optimize policy & valueq
-            summary = self.optimize()
+            # Update policy & values
+            summary = self.update_policy()
+
             # Log the training-procedure
             self.t += self.n_steps * self.n_envs
             rew_batch, done_batch = self.storage.fetch_log_data()
@@ -142,9 +146,11 @@ class PPO(BaseAgent):
             self.logger.write_summary(summary)
             self.logger.dump()
             self.optimizer = adjust_lr(self.optimizer, self.learning_rate, self.t, num_timesteps)
+
             # Save the model
             if self.t > ((checkpoint_cnt+1) * save_every):
                 torch.save({'state_dict': self.policy.state_dict()}, self.logger.logdir +
                            '/model_' + str(self.t) + '.pth')
                 checkpoint_cnt += 1
+
         self.env.close()

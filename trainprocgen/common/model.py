@@ -1,6 +1,7 @@
-from .misc_util import orthogonal_init, xavier_uniform_init
-import torch.nn as nn
 import torch
+import torch.nn as nn
+
+from .misc_util import orthogonal_init, xavier_uniform_init
 
 
 class Flatten(nn.Module):
@@ -11,7 +12,7 @@ class Flatten(nn.Module):
 class MlpModel(nn.Module):
     def __init__(self,
                  input_dims=4,
-                 hidden_dims=[64, 64],
+                 hidden_dims=(64, 64),
                  **kwargs):
         """
         input_dim:     (int)  number of the input dimensions
@@ -21,7 +22,7 @@ class MlpModel(nn.Module):
         super(MlpModel, self).__init__()
 
         # Hidden layers
-        hidden_dims = [input_dims] + hidden_dims
+        hidden_dims = [input_dims] + list(hidden_dims)
         layers = []
         for i in range(len(hidden_dims) - 1):
             in_features = hidden_dims[i]
@@ -53,8 +54,7 @@ class NatureModel(nn.Module):
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2), nn.ReLU(),
             nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1), nn.ReLU(),
             Flatten(),
-            nn.Linear(in_features=64*7*7, out_features=512), nn.ReLU()
-        )
+            nn.Linear(in_features=64 * 7 * 7, out_features=512), nn.ReLU())
         self.output_dim = 512
         self.apply(orthogonal_init)
 
@@ -77,6 +77,7 @@ class ResidualBlock(nn.Module):
         out = self.conv2(out)
         return out + x
 
+
 class ImpalaBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ImpalaBlock, self).__init__()
@@ -90,6 +91,7 @@ class ImpalaBlock(nn.Module):
         x = self.res1(x)
         x = self.res2(x)
         return x
+
 
 class ImpalaModel(nn.Module):
     def __init__(self,
@@ -145,11 +147,11 @@ class GRU(nn.Module):
             # Let's figure out which steps in the sequence have a zero for any agent
             # We will always assume t=0 has a zero in it as that makes the logic cleaner
             # (can be interpreted as a truncated back-propagation through time)
-            has_zeros = ((masks[1:] == 0.0) \
-                            .any(dim=-1)
-                            .nonzero()
-                            .squeeze()
-                            .cpu())
+            has_zeros = ((masks[1:] == 0.0)
+                         .any(dim=-1)
+                         .nonzero()
+                         .squeeze()
+                         .cpu())
 
             # +1 to correct the masks[1:]
             if has_zeros.dim() == 0:
