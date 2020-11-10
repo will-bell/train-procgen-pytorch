@@ -1,6 +1,5 @@
-import numpy as np
-import random
 import gym
+import numpy as np
 import torch
 import torch.nn as nn
 

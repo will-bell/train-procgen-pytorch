@@ -2,8 +2,8 @@ import numpy as np
 import torch
 import torch.optim as optim
 
-from common.misc_util import adjust_lr
-from .base_agent import BaseAgent
+from trainprocgen.agents.base_agent import BaseAgent
+from trainprocgen.common.misc_util import adjust_lr
 
 
 class PPO(BaseAgent):

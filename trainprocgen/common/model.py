@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .misc_util import orthogonal_init, xavier_uniform_init
+from trainprocgen.common.misc_util import orthogonal_init, xavier_uniform_init
 
 
 class Flatten(nn.Module):
