@@ -55,8 +55,7 @@ if __name__ == '__main__':
     config = {}
     
     # TODO how to handle append_performance in ADRParameter ??
-    for i in range(num_parameters):
-        env_parameter = parameters[i]
+    for i, env_parameter in enumerate(parameters):
         _lambda = env_parameter.sample()
         if i == feature_to_boundary_sample:
             # boundary_sample returns ADRParameter, so call return_val to get its value
