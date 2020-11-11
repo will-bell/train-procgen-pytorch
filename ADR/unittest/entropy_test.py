@@ -7,9 +7,9 @@ import unittest
 
 from ADR import *
 
-class TestEntrophyMethod(unittest.TestCase):
+class TestEntropyMethod(unittest.TestCase):
     
-    def test_entrophy(self):
+    def test_entropy(self):
         
         param1 = ADREnvParameter(value=7, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
         lam = param1.boundary_sample()
