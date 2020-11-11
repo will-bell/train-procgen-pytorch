@@ -78,11 +78,13 @@ class ADREnvParameter:
         step_size (float): determines how much phi changes
     """
     
-    def __init__(self, value:float, lower_bound: float, upper_bound: float, step_size: float,  thresh_low: float, thresh_high: float):
-
+    def __init__(self, name: str, value: float, lower_bound: float, upper_bound: float, 
+                    step_size: float,  thresh_low: float, thresh_high: float, is_continuous: bool):
+        self.name = name
         self.value = value
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
+        self.is_continuous = is_continuous
         
         # adr_flag is to flag the SINGLE dimension/variable that will be Phi_L or Phi_R
         # if the flag is not set, then the value will be selected from U[Phi_L, Phi_R]
@@ -126,9 +128,17 @@ class ADREnvParameter:
         Returns:
             float: value in Uniform Distribution
         """
-        # sampled_event = self.lower_bound + (self.upper_bound - self.lower_bound)*torch.rand(1)[0]
-        sampled_event = torch.FloatTensor(1).uniform_(self.phi_l.return_val(), self.phi_h.return_val())
-        sampled_event = sampled_event.item()
+        if self.phi_l.return_val() == self.phi_h.return_val():
+            return self.phi_l.return_val()
+        
+        if self.is_continuous:
+            # sampled_event = self.lower_bound + (self.upper_bound - self.lower_bound)*torch.rand(1)[0]
+            sampled_event = torch.FloatTensor(1).uniform_(self.phi_l.return_val(), self.phi_h.return_val())
+            sampled_event = sampled_event.item()
+        else:
+            # sampled_event = torch.randint(self.phi_l.return_val(), self.phi_h.return_val(), size=(1,)).item()
+            torch.LongTensor(1).random_(self.phi_l.return_val(), self.phi_h.return_val())
+
         print(sampled_event)
         return sampled_event
 

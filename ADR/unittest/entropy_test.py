@@ -1,4 +1,4 @@
-# Workout around for windows...
+# Work around for windows...
 # Need to append parent directory to sys path to get ADR module
 import sys
 sys.path.append('..')
@@ -11,14 +11,14 @@ class TestEntropyMethod(unittest.TestCase):
     
     def test_entropy(self):
         
-        param1 = ADREnvParameter(value=7, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
+        param1 = ADREnvParameter(name='param1', value=7, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10, is_continuous=True)
         lam = param1.boundary_sample()
         # Repeat adding fake reward so it triggers a reach_max_buffer call
         for i in range(MAX_SIZE_BUFFER):
             lam.append_performance(-1.0)
         # print(param1.phi_h.return_val(), param1.phi_l.return_val())
         
-        param2 = ADREnvParameter(value=8, lower_bound=1, upper_bound=100, step_size=1, thresh_low = 0, thresh_high=10)
+        param2 = ADREnvParameter(name='param2', value=8, lower_bound=1, upper_bound=100, step_size=1, thresh_low = 0, thresh_high=10, is_continuous=True)
         lam = param2.boundary_sample()
         # Repeat adding fake reward so it triggers a reach_max_buffer call
         for i in range(MAX_SIZE_BUFFER):
@@ -26,7 +26,7 @@ class TestEntropyMethod(unittest.TestCase):
         # print(param2.phi_h.return_val(), param2.phi_l.return_val())
 
 
-        param3 = ADREnvParameter(value=9, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
+        param3 = ADREnvParameter(name='param3', value=9, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10, is_continuous=True)
         lam = param3.boundary_sample()
         # Repeat adding fake reward so it triggers a reach_max_buffer call
         for i in range(MAX_SIZE_BUFFER):
