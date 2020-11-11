@@ -11,12 +11,12 @@ class ADRParameter:
     
         Args:
             value (float): value of Phi
-            delta (float): delta value to perturb phi when performance exceeds threshold
+            step_size (float): step_size value to perturb phi when performance exceeds threshold
             boundaries (dict): keys = {'lower_bound', 'upper_bound'}
     """
-    def __init__(self, value: float, delta: float, boundaries: dict,  thresh_low: float, thresh_high: float):
+    def __init__(self, value: float, step_size: float, boundaries: dict,  thresh_low: float, thresh_high: float):
         self.value = value
-        self.delta = delta #some delta to perturb Phi 
+        self.step_size = step_size #some delta to perturb Phi 
         self.boundaries = boundaries
         self.thresh_low = thresh_low
         self.thresh_high = thresh_high
@@ -55,9 +55,9 @@ class ADRParameter:
         self.performance_buffer = []
 
         if performance_average >= self.thresh_high:
-            self.value = self.value + self.delta
+            self.value = self.value + self.step_size
         elif performance_average <= self.thresh_low:
-            self.value = self.value - self.delta
+            self.value = self.value - self.step_size
         
         # print('--------Test Clipping--------')
         # print('preclip', self.value)
@@ -75,10 +75,10 @@ class ADREnvParameter:
         value (float): starting value of phi's
         lower_bound (float): smallest lower bound possible
         upper_bound (float): largest upper bound possible
-        delta (float): determines how much phi changes
+        step_size (float): determines how much phi changes
     """
     
-    def __init__(self, value:float, lower_bound: float, upper_bound: float, delta: float,  thresh_low: float, thresh_high: float):
+    def __init__(self, value:float, lower_bound: float, upper_bound: float, step_size: float,  thresh_low: float, thresh_high: float):
 
         self.value = value
         self.lower_bound = lower_bound
@@ -91,8 +91,8 @@ class ADREnvParameter:
         boundary_left  = dict(lower_bound = self.lower_bound, upper_bound = self.value)
         boundary_right = dict(lower_bound = self.value, upper_bound = self.upper_bound)
 
-        self.phi_l = ADRParameter(self.value, delta, boundaries = boundary_left, thresh_low=thresh_low, thresh_high=thresh_high) # low
-        self.phi_h = ADRParameter(self.value, delta, boundaries = boundary_right, thresh_low=thresh_low, thresh_high=thresh_high) # high
+        self.phi_l = ADRParameter(self.value, step_size, boundaries = boundary_left, thresh_low=thresh_low, thresh_high=thresh_high) # low
+        self.phi_h = ADRParameter(self.value, step_size, boundaries = boundary_right, thresh_low=thresh_low, thresh_high=thresh_high) # high
     
     def set_adr_flag(self, flag: bool):
         self.adr_flag = flag
@@ -163,17 +163,17 @@ def adr_entrophy(env_parameters: list):
 if __name__ == "__main__":
     torch.manual_seed(0)
     
-    param1 = ADREnvParameter(value=7, lower_bound=1, upper_bound=100, delta=0.5, thresh_low = 0, thresh_high=10)
+    param1 = ADREnvParameter(value=7, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
     lam = param1.boundary_sample()
     lam.append_performance(-1.0)
     print(param1.phi_h.return_val(), param1.phi_l.return_val())
     
-    param2 = ADREnvParameter(value=8, lower_bound=1, upper_bound=100, delta=1, thresh_low = 0, thresh_high=10)
+    param2 = ADREnvParameter(value=8, lower_bound=1, upper_bound=100, step_size=1, thresh_low = 0, thresh_high=10)
     lam = param2.boundary_sample()
     lam.append_performance(999.0)
     print(param2.phi_h.return_val(), param2.phi_l.return_val())
 
-    param3 = ADREnvParameter(value=9, lower_bound=1, upper_bound=100, delta=0.5, thresh_low = 0, thresh_high=10)
+    param3 = ADREnvParameter(value=9, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
     lam = param3.boundary_sample()
     lam.append_performance(-1.0)
     print(param3.phi_h.return_val(), param3.phi_l.return_val())
