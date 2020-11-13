@@ -149,8 +149,8 @@ class PPO(BaseAgent):
 
             # Save the model
             if self.t > ((checkpoint_cnt+1) * save_every):
-                torch.save({'state_dict': self.policy.state_dict()}, self.logger.logdir +
-                           '/model_' + str(self.t) + '.pth')
+                torch.save({'state_dict': self.policy.state_dict()},
+                           self.logger.logdir + '/model_' + str(self.t) + '.pth')
                 checkpoint_cnt += 1
 
         self.env.close()
