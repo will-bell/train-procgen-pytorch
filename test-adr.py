@@ -2,6 +2,7 @@ from ADR import *
 from bossfight_setup import BossfightDomainConfig, make_interactive_bossfight_env
 
 import matplotlib.pyplot as plt
+import gym3
 
 """
 Default configurable settings for Bossfight
@@ -65,8 +66,16 @@ if __name__ == '__main__':
     
     print(config)
     test_config = BossfightDomainConfig(**config)
-    ia = make_interactive_bossfight_env(test_config)
+    env = make_interactive_bossfight_env(test_config)
 
+    h, w, _ = env.ob_space["rgb"].shape
+    
+    step = 0
+    for i in range(1000):
+        env.act(gym3.types_np.sample(env.ac_space, bshape=(env.num,)))
+        rew, obs, first = env.observe()
+        print(f"step {step} reward {rew} first {first}")
+        step += 1
 
     # # Testing to see if torch.randint is Uniformly Distributed
     # samples = [torch.randint(0, len(parameters), size=(1,)).item() for i in range(100000)]

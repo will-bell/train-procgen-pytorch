@@ -36,14 +36,16 @@ def make_interactive_bossfight_env(config: BossfightDomainConfig = None, **kwarg
     env = VideoRecorderWrapper(
                 env=env, directory='./boss-fight-results', ob_key=None, info_key=info_key
             )
-    h, w, _ = env.ob_space["rgb"].shape
     
-    step = 0
-    for i in range(1000):
-        env.act(gym3.types_np.sample(env.ac_space, bshape=(env.num,)))
-        rew, obs, first = env.observe()
-        print(f"step {step} reward {rew} first {first}")
-        step += 1
+    return env
+    # h, w, _ = env.ob_space["rgb"].shape
+    
+    # step = 0
+    # for i in range(1000):
+    #     env.act(gym3.types_np.sample(env.ac_space, bshape=(env.num,)))
+    #     rew, obs, first = env.observe()
+    #     print(f"step {step} reward {rew} first {first}")
+    #     step += 1
     # return ProcgenInteractive(
     #     env,
     #     ob_key=None,
