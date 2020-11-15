@@ -42,7 +42,9 @@ class ADRManager:
             is_high (bool): high or low flag for choosing between phi_L or phi_H
             performance (float): performance calculation
         """
-        reached_max_buffer = self.parameters_list[feature_ind].get_param(is_high).append_performance(performance)
+        reached_max_buffer = self.parameters_list[feature_ind]\
+                                    .get_param(is_high)\
+                                    .append_performance(performance)
         
         if reached_max_buffer:
             d = dict()
