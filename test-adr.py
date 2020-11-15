@@ -51,18 +51,13 @@ if __name__ == '__main__':
     
     num_parameters = len(parameters)
     print(f'Number of parameters (d): num_parameters')
-    feature_to_boundary_sample = torch.randint(0, len(parameters), size=(1,)).item()
-    parameters[feature_to_boundary_sample].set_adr_flag(True)
-    config = {}
+    # feature_to_boundary_sample = torch.randint(0, len(parameters), size=(1,)).item()
+    # parameters[feature_to_boundary_sample].set_adr_flag(True)
     
-    # TODO how to handle append_performance in ADRParameter ??
-    for i, env_parameter in enumerate(parameters):
-        _lambda = env_parameter.sample()
-        if i == feature_to_boundary_sample:
-            # boundary_sample returns ADRParameter, so call return_val to get its value
-            _lambda = _lambda.return_val()
-            
-        config[env_parameter.name] = _lambda
+    manager = ADRManager(parameters)
+    feature_to_boundary_sample, probability = manager.select_boundary_sample()
+    
+    config = manager.create_config(feature_to_boundary_sample, probability)
     
     print(config)
     test_config = BossfightDomainConfig(**config)
