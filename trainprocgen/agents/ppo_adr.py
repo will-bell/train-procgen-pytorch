@@ -2,6 +2,7 @@ from typing import Union, Dict
 import random
 
 import numpy as np
+import pandas as pd
 import torch
 from torch import nn
 
@@ -9,20 +10,118 @@ from trainprocgen.common.misc_util import adjust_lr
 from .ppo import PPO
 from procgen.domains import DomainConfig
 
+from ADR import ADRParameter, ADREnvParameter
+
 Number = Union[int, float]
 
 
 class ADRManager:
-
-    def __init__(self):
+    def __init__(self, parameters_list: list):
+        self.parameters_list = parameters_list
+        self.parameters = {}
+        for param in parameters_list:
+            self.parameters[param.name] = param
+        
+        column_names = [param.name + '_low' for param in self.parameters_list] \
+                    + [param.name + '_hi' for param in self.parameters_list]
+        self.result_dataframe = pd.DataFrame(columns=column_names)
+        self.running_dataframes = []
+    
+    def evaluate_performance(self, policy: nn.Module):
+        # Call self.append_performance here too
         pass
+    
+    def get_environment_parameters(self) -> Dict[str, ADREnvParameter]:
+        return self.parameters
+    
+    def append_performance(self, feature_ind: int, is_high: bool, performance: float):
+        """Append performance to performance buffer of boundary sampled feature
 
-    def evaluate_performance(self, policy: nn.Module):|
-        pass
+        Args:
+            feature_ind (int): feature index
+            is_high (bool): high or low flag for choosing between phi_L or phi_H
+            performance (float): performance calculation
+        """
+        reached_max_buffer = self.parameters_list[feature_ind].get_param(is_high).append_performance(performance)
+        
+        if reached_max_buffer:
+            d = dict()
+            for param in self.parameters:
+                d[param.name + '_low'] = param.get_param(is_high=False).value
+                d[param.name + '_hi'] = param.get_param(is_high=True).value
 
-    def get_environment_parameters(self) -> Dict[str, Number]:
-        pass
+            d['performance'] = performance
+            self.running_dataframes.append(d)
+            
+            # Add new dataframes to running list of dataframes
+            # Either concat now or write to csv
+            if len(self.running_dataframes >= 10):
+                self.running_dataframes = pd.DataFrame(self.running_dataframes)
+                # frames = [self.result_dataframe, self.running_dataframes]
+                # self.result_dataframe = pd.concat(frames)
+                
+                # If result file already exists, append to the file
+                # Or else write a new file
+                if os.path.exists('results.csv'):  
+                    self.running_dataframes.to_csv('results.csv', mode='a', header=False)
+                else:
+                    self.running_dataframes.to_csv('results.csv')
+                    
+                # Reset dataframes
+                self.running_dataframes = []
 
+    def select_boundary_sample(self):
+        """ Selects feature index to boundary sample. Also uniformly selects a probability
+        between 0 < x < 1 for low and high of phi
+
+        Returns:
+            int: feature index
+            float: probability to choose between phi_L and phi_H
+        """
+        
+        # Reset adr flag
+        for param in self.parameters:
+            self.parameters[param].set_adr_flag(False)
+
+        feature_to_boundary_sample = torch.randint(0, len(self.parameters_list), size=(1,)).item()
+        self.parameters_list[feature_to_boundary_sample].set_adr_flag(True)
+        
+        probability = torch.rand(1).item() # 0 <= x < 1
+
+        return feature_to_boundary_sample, probability
+    
+    def create_config(self, feature_to_boundary_sample: int, probability: float):
+        config = {}
+    
+        # TODO how to handle append_performance in ADRParameter ??
+        for i, env_parameter in enumerate(self.parameters_list):
+            _lambda = env_parameter.sample(probability)
+            if i == feature_to_boundary_sample:
+                # boundary_sample returns ADRParameter, so call return_val to get its value
+                _lambda = _lambda.return_val()
+                
+            config[env_parameter.name] = _lambda
+        return config
+        
+    def adr_entropy(self):
+        """ Calculate ADR Entrophy
+
+        Returns:
+            float: entropy =  1/d \sum_{i=1}^{d} log(phi_ih - phi_il)
+        """
+        d = len(self.parameters_list)
+        phi_H = []
+        phi_L = []
+        
+        for i in range(d):
+            phi_H.append(self.parameters_list[i].phi_h.return_val())
+            phi_L.append(self.parameters_list[i].phi_l.return_val())
+        
+        phi_H = torch.tensor(phi_H, dtype=torch.float)
+        phi_L = torch.tensor(phi_L, dtype=torch.float)
+        
+        entropy = torch.mean(torch.log(phi_H - phi_L))
+        return entropy
 
 class PPOADR(PPO):
 

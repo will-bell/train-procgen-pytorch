@@ -1,4 +1,6 @@
 from ADR import *
+from trainprocgen.agents import ppo_adr
+
 from bossfight_setup import BossfightDomainConfig, make_interactive_bossfight_env
 
 import matplotlib.pyplot as plt
@@ -54,7 +56,7 @@ if __name__ == '__main__':
     # feature_to_boundary_sample = torch.randint(0, len(parameters), size=(1,)).item()
     # parameters[feature_to_boundary_sample].set_adr_flag(True)
     
-    manager = ADRManager(parameters)
+    manager = ppo_adr.ADRManager(parameters)
     feature_to_boundary_sample, probability = manager.select_boundary_sample()
     
     config = manager.create_config(feature_to_boundary_sample, probability)
