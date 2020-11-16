@@ -10,13 +10,14 @@ from trainprocgen.common.misc_util import adjust_lr
 from .ppo import PPO
 from procgen.domains import DomainConfig
 
-from ADR import ADRParameter, ADREnvParameter
+from ADR import ADRParameter, ADREnvParameter, MAX_SIZE_BUFFER
 
 Number = Union[int, float]
 
 
 class ADRManager:
-    def __init__(self, parameters_list: list):
+    def __init__(self, parameters_list: list, policy: nn.Module, n_envs: int, hidden_state_size: int):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.parameters_list = parameters_list
         self.parameters = {}
         for param in parameters_list:
@@ -26,11 +27,68 @@ class ADRManager:
                     + [param.name + '_hi' for param in self.parameters_list]
         self.result_dataframe = pd.DataFrame(columns=column_names)
         self.running_dataframes = []
+        
+        self.num_trajectory = MAX_SIZE_BUFFER #idk change this later? Do all trajectories at once??
+        self.policy = policy
+        self.n_envs = n_envs
+        self.hidden_state_size = hidden_state_size
     
-    def evaluate_performance(self, policy: nn.Module):
+    def predict(self, obs, hidden_state, done):
+        with torch.no_grad():
+            obs = torch.FloatTensor(obs).to(device=self.device)
+            hidden_state = torch.FloatTensor(hidden_state).to(device=self.device)
+            mask = torch.FloatTensor(1-done).to(device=self.device)
+            dist, value, hidden_state = self.policy(obs, hidden_state, mask)
+            act = dist.sample()
+            log_prob_act = dist.log_prob(act)
+
+        return act.cpu().numpy(), log_prob_act.cpu().numpy(), value.cpu().numpy(), hidden_state.cpu().numpy()
+
+    def evaluate_performance(self, env):
         # Call self.append_performance here too
-        pass
-    
+        done = False
+        
+        average_returns = []
+        for trajectory in range(self.num_trajectory):
+            obs = env.reset()
+            obs = obs['rgb']
+            hidden_state = np.zeros((self.n_envs, self.hidden_state_size))
+            done = np.zeros(self.n_envs)
+            
+            value_batch = []
+            rew_batch = []
+            done_batch = []
+            
+            for i in range(20):
+                act, log_prob_act, value, next_hidden_state = self.predict(obs, hidden_state, done)
+                next_obs, rew, done, info = env.step(act)
+                next_obs = next_obs['rgb']
+                # self.storage.store(obs, hidden_state, act, rew, done, info, log_prob_act, value)
+                value_batch.append(value)
+                rew_batch.append(rew)
+                done_batch.append(done)
+                obs = next_obs
+                hidden_state = next_hidden_state
+            
+            return_batch = self.compute_estimates(value_batch, rew_batch, done_batch)
+            average_return = np.mean(return_batch)
+            average_returns.append(average_return)
+        
+        return np.mean(average_returns)
+
+    def compute_estimates(self, value_batch: list, rew_batch: list, 
+                                done_batch: list, gamma=0.99):
+        return_batch = [0]*len(value_batch)
+        G = value_batch[-1]
+        for i in reversed(range(len(value_batch))):
+            rew = rew_batch[i]
+            done = done_batch[i]
+
+            G = rew + gamma * G * (1 - done)
+            return_batch[i] = G
+        
+        return return_batch
+            
     def get_environment_parameters(self) -> Dict[str, ADREnvParameter]:
         return self.parameters
     
@@ -151,6 +209,7 @@ class PPOADR(PPO):
                  normalize_rew=True,
                  use_gae=True,
                  adr_prob: float = 0.5,
+                 parameters_list = [],
                  **kwargs):
 
         super().__init__(env, policy, logger, storage, device, n_checkpoints, n_steps, n_envs, epoch,
@@ -158,7 +217,7 @@ class PPOADR(PPO):
                          value_coef, entropy_coef, normalize_adv, normalize_rew, use_gae, **kwargs)
 
         self.adr_prob = adr_prob
-        self.adr_manager = ADRManager()
+        self.adr_manager = ADRManager(parameters_list, policy, n_envs, storage.hidden_state_size)
         self.domain_config = domain_config
 
     def train(self, num_timesteps: int):

@@ -2,9 +2,12 @@ from ADR import *
 from trainprocgen.agents import ppo_adr
 
 from bossfight_setup import BossfightDomainConfig, make_interactive_bossfight_env
+from trainprocgen.common.model import NatureModel, ImpalaModel
+from trainprocgen.common.policy import CategoricalPolicy
+from trainprocgen.common.storage import Storage
 
 import matplotlib.pyplot as plt
-import gym3
+import gym3, gym
 
 """
 Default configurable settings for Bossfight
@@ -56,25 +59,52 @@ if __name__ == '__main__':
     # feature_to_boundary_sample = torch.randint(0, len(parameters), size=(1,)).item()
     # parameters[feature_to_boundary_sample].set_adr_flag(True)
     
-    manager = ppo_adr.ADRManager(parameters)
-    feature_to_boundary_sample, probability = manager.select_boundary_sample()
+    n_envs = 8
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # MODEL
+    print('INTIALIZING MODEL...')
+    env = make_interactive_bossfight_env(None, n_envs=n_envs)
+
+    observation_space = env.observation_space
+    print(observation_space)
+    print(observation_space['rgb'].shape)
+    observation_shape = observation_space['rgb'].shape
+    print(observation_shape)
+    in_channels = observation_shape[0]
+    action_space = env.action_space
+    print(action_space)
     
+    architecture = 'impala'
+    recurrent = True
+    # Model architecture
+    if architecture == 'nature':
+        model = NatureModel(in_channels=in_channels, input_shape=observation_shape)
+    elif architecture == 'impala':
+        model = ImpalaModel(in_channels=in_channels, input_shape=observation_shape)
+    else:
+        raise NotImplementedError('Only Nature and Impala models are implemented')
+
+    # Discrete action space
+    if isinstance(action_space, gym.spaces.Discrete):
+        action_size = action_space.n
+        policy = CategoricalPolicy(model, recurrent, action_size)
+    else:
+        raise NotImplementedError
+    policy.to(device)
+    hidden_state_size = model.output_dim
+
+    manager = ppo_adr.ADRManager(parameters, policy, n_envs, hidden_state_size)
+    feature_to_boundary_sample, probability = manager.select_boundary_sample()
+    is_high = probability >= 0.5
     config = manager.create_config(feature_to_boundary_sample, probability)
     
     print(config)
     test_config = BossfightDomainConfig(**config)
-    env = make_interactive_bossfight_env(test_config)
+    env = make_interactive_bossfight_env(test_config, n_envs=n_envs)
 
-    h, w, _ = env.ob_space["rgb"].shape
-    
-    step = 0
-    for i in range(1000):
-        env.act(gym3.types_np.sample(env.ac_space, bshape=(env.num,)))
-        rew, obs, first = env.observe()
-        print(f"step {step} reward {rew} first {first}")
-        step += 1
-
-    # # Testing to see if torch.randint is Uniformly Distributed
-    # samples = [torch.randint(0, len(parameters), size=(1,)).item() for i in range(100000)]
-    # plt.hist(samples, bins=len(parameters),)
-    # plt.show()
+    performance = manager.evaluate_performance(env)
+    manager.append_performance(feature_to_boundary_sample,
+                               is_high,
+                               performance)

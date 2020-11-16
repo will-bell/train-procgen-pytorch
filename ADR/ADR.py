@@ -7,7 +7,7 @@ from trainprocgen.common.storage import Storage
 
 import os
 
-MAX_SIZE_BUFFER = 1
+MAX_SIZE_BUFFER = 10
 
 class ADRParameter:
     """ Phi_L or Phi_H in the literature (section 5.2)
