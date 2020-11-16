@@ -17,9 +17,6 @@ class ADRManager:
     def __init__(self):
         pass
 
-    def evaluate_performance(self, policy: nn.Module):|
-        pass
-
     def get_environment_parameters(self) -> Dict[str, Number]:
         pass
 
@@ -60,27 +57,34 @@ class PPOADR(PPO):
         self.adr_manager = ADRManager()
         self.domain_config = domain_config
 
+        self._hidden_state = None
+
+    def _generate_training_data(self):
+        obs = self.env.reset()
+        done = np.zeros(self.n_envs)
+        for _ in range(self.n_steps):
+            act, log_prob_act, value, next_hidden_state = self.predict(obs, self._hidden_state, done)
+            next_obs, rew, done, info = self.env.step(act)
+            self.storage.store(obs, self._hidden_state, act, rew, done, info, log_prob_act, value)
+            obs = next_obs
+            self._hidden_state = next_hidden_state
+        _, _, last_val, hidden_state = self.predict(obs, self._hidden_state, done)
+        self.storage.store_last(obs, hidden_state, last_val)
+
     def train(self, num_timesteps: int):
         save_every = num_timesteps // self.num_checkpoints
         checkpoint_cnt = 0
-        obs = self.env.reset()
-        hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
-        done = np.zeros(self.n_envs)
+        self._hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
 
         while self.t < num_timesteps:
             # Run Policy
             self.policy.eval()
 
-            self.env.reset()
-
-            for _ in range(self.n_steps):
-                act, log_prob_act, value, next_hidden_state = self.predict(obs, hidden_state, done)
-                next_obs, rew, done, info = self.env.step(act)
-                self.storage.store(obs, hidden_state, act, rew, done, info, log_prob_act, value)
-                obs = next_obs
-                hidden_state = next_hidden_state
-            _, _, last_val, hidden_state = self.predict(obs, hidden_state, done)
-            self.storage.store_last(obs, hidden_state, last_val)
+            x = random.uniform(0., 1.)
+            if x < self.adr_prob:
+                self._generate_training_data()
+            else:
+                pass
 
             # Compute advantage estimates
             self.storage.compute_estimates(self.gamma, self.lmbda, self.use_gae, self.normalize_adv)
