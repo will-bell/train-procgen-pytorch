@@ -1,10 +1,13 @@
 """
-Implementation of ADR (https://arxiv.org/pdf/1910.07113.pdf)
+Implementation of Automatic Domain Randomization (https://arxiv.org/pdf/1910.07113.pdf)
 """
 
 import torch
+from trainprocgen.common.storage import Storage
 
-MAX_SIZE_BUFFER = 1
+import os
+
+MAX_SIZE_BUFFER = 10
 
 class ADRParameter:
     """ Phi_L or Phi_H in the literature (section 5.2)
@@ -25,6 +28,7 @@ class ADRParameter:
         self.performance_buffer = []
         self.max_size_buffer = MAX_SIZE_BUFFER # The papers default value is 240
         
+        # self.storage = Storage()
         
     def return_val(self):
         return self.value
@@ -41,6 +45,8 @@ class ADRParameter:
         self.performance_buffer.append(performance)
         if len(self.performance_buffer) >= self.max_size_buffer:
             self.reach_max_buffer()
+            return True
+        return False
         
     def reach_max_buffer(self):
         """When buffer is at length = self.max_size_buffer,
@@ -99,21 +105,20 @@ class ADREnvParameter:
     def set_adr_flag(self, flag: bool):
         self.adr_flag = flag
 
-    def sample(self):
+    def sample(self, probability: float):
         if self.adr_flag:
-            return self.boundary_sample()
+            return self.boundary_sample(probability)
         else:
             return self.uniform_sample()
 
-    def boundary_sample(self):
+    def boundary_sample(self, probability: float):
         """Select phi_l or phi_r with equal probability
 
         Returns:
             ADRParameter: phi_l or phi_r
         """
-        x = torch.rand(1).item()
-        print('probability: ', x)
-        if x < 0.5:
+        print('probability: ', probability)
+        if probability < 0.5:
             print('lower bound sample')
             lam = self.phi_l
         else:
@@ -142,33 +147,16 @@ class ADREnvParameter:
         print(sampled_event)
         return sampled_event
 
+    def get_param(self, is_high: bool):
+        if is_high:
+            return self.phi_h
+        return self.phi_l
+    
     def evaluate_performance(self):
         # TODO maybe don't implement this here?
         pass
     
 
-def adr_entrophy(env_parameters: list):
-    """ Calculate ADR Entrophy
-
-    Args:
-        env_parameters (list <ADREnvParameter>): List of all environment parameters
-
-    Returns:
-        float: entrophy =  1/d \sum_{i=1}^{d} log(phi_ih - phi_il)
-    """
-    d = len(env_parameters)
-    phi_H = []
-    phi_L = []
-    
-    for i in range(d):
-        phi_H.append(env_parameters[i].phi_h.return_val())
-        phi_L.append(env_parameters[i].phi_l.return_val())
-    
-    phi_H = torch.tensor(phi_H, dtype=torch.float)
-    phi_L = torch.tensor(phi_L, dtype=torch.float)
-    
-    entrophy = torch.mean(torch.log(phi_H - phi_L))
-    return entrophy
 
 if __name__ == "__main__":
     torch.manual_seed(0)
@@ -188,5 +176,5 @@ if __name__ == "__main__":
     lam.append_performance(-1.0)
     print(param3.phi_h.return_val(), param3.phi_l.return_val())
 
-    entrophy = adr_entrophy([param1, param2, param3])
-    print(entrophy)
+    entropy = adr_entrophy([param1, param2, param3])
+    print(entropy)

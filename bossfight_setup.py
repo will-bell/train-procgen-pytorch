@@ -1,4 +1,7 @@
 from procgen.env import ProcgenGym3Env
+from procgen import ProcgenEnv
+from trainprocgen.common.env.procgen_wrappers import *
+
 from procgen.domains import BossfightDomainConfig
 import os
 
@@ -20,7 +23,11 @@ class ProcgenInteractive(Interactive):
                 unwrap(self._env).set_state(self._saved_state)
         super()._update(dt, keys_clicked, keys_pressed)
 
-def make_interactive_bossfight_env(config: BossfightDomainConfig = None, **kwargs) -> ProcgenInteractive:
+def make_interactive_bossfight_env(config: BossfightDomainConfig = None, 
+                                   config_name: str = 'config.json', 
+                                   video_directory: str = './boss-fight-results',
+                                   n_envs = 1,
+                                   **kwargs) -> ProcgenInteractive:
     info_key = "rgb"
     kwargs["render_mode"] = "rgb_array"
 
@@ -29,29 +36,18 @@ def make_interactive_bossfight_env(config: BossfightDomainConfig = None, **kwarg
     configs_dir = os.path.join(os.path.abspath('.'), '.configs')
     if not os.path.isdir(configs_dir):
         os.mkdir(configs_dir)
-    config_path = os.path.join(configs_dir, 'config.json')
+    config_path = os.path.join(configs_dir, config_name)
     config.to_json(config_path)
 
-    env = ProcgenGym3Env(1, 'dc_bossfight', domain_config_path=config_path, **kwargs)
+    env = ProcgenGym3Env(n_envs, 'dc_bossfight', domain_config_path=config_path, **kwargs)
+    # env = VecExtractDictObs(env, "rgb")
+    # env = TransposeFrame(env)
+    # env = ScaledFloatFrame(env)
     env = VideoRecorderWrapper(
-                env=env, directory='./boss-fight-results', ob_key=None, info_key=info_key
+                env=env, directory=video_directory, ob_key=None, info_key=info_key
             )
-    
+    env = gym3.ToBaselinesVecEnv(env)
     return env
-    # h, w, _ = env.ob_space["rgb"].shape
-    
-    # step = 0
-    # for i in range(1000):
-    #     env.act(gym3.types_np.sample(env.ac_space, bshape=(env.num,)))
-    #     rew, obs, first = env.observe()
-    #     print(f"step {step} reward {rew} first {first}")
-    #     step += 1
-    # return ProcgenInteractive(
-    #     env,
-    #     ob_key=None,
-    #     info_key=info_key,
-    #     width=w * 12,
-    #     height=h * 12)
 
 
 if __name__ == '__main__':
