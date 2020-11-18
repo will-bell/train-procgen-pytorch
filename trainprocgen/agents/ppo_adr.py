@@ -35,7 +35,7 @@ class EnvironmentParameter:
         self.lower_bound = np.min(self.lower_bound + self.delta, self.upper_bound)
 
     def decrease_lower_bound(self):
-        self.lower_bound = np.max(self.lower_bound - self.delta, self.lower_bound)
+        self.lower_bound = np.max(self.lower_bound - self.delta, self.clip_lower_bound)
 
     def increase_upper_bound(self):
         self.upper_bound = np.min(self.upper_bound + self.delta, self.clip_upper_bound)
