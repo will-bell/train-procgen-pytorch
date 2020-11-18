@@ -35,7 +35,7 @@ class EnvironmentParameter:
         self.lower_bound = np.min(self.lower_bound + self.delta, self.upper_bound)
 
     def decrease_lower_bound(self):
-        self.lower_bound = np.max(self.lower_bound - self.delta, self.lower_bound)
+        self.lower_bound = np.max(self.lower_bound - self.delta, self.clip_lower_bound)
 
     def increase_upper_bound(self):
         self.upper_bound = np.min(self.upper_bound + self.delta, self.clip_upper_bound)
@@ -108,7 +108,8 @@ class EvaluationEnvironment:
         self._boundary_config.to_json(self._boundary_config_path)
 
         # Initialize the environment
-        self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0', domain_config_path=str(self._boundary_config_path))
+        self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0',
+                             domain_config_path=str(self._boundary_config_path))
 
         # Initialize the performance buffers
         self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
