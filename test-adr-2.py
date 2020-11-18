@@ -44,24 +44,26 @@ if __name__ == '__main__':
     
     print(training_env)
     # print(initial_domain_config)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
     observation_space = training_env.observation_space
     observation_shape = observation_space.shape
+    print(f'initial obs shape: {observation_shape}')
+
     in_channels = observation_shape[0]
     action_space = training_env.action_space
     
-    model = ImpalaModel(in_channels=in_channels, input_shape=observation_shape)
+    print(f'in channels: {in_channels}')
+    model = ImpalaModel(in_channels=in_channels, input_shape=observation_shape)#.to(device)
     action_size = action_space.n
-    recurrent = True
+    recurrent = False
     policy = CategoricalPolicy(model, recurrent, action_size)
-    policy.to(device)
+    # policy.to(device)
     
     logger = Logger(n_envs=8, logdir='./log')
     
     hidden_state_size = model.output_dim
     storage = Storage(observation_shape, hidden_state_size, num_steps=128, num_envs=8, device=device)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     n_checkpoints = 10
     ppo_adr = PPOADR(training_env,
                     initial_domain_config,

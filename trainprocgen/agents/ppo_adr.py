@@ -108,8 +108,13 @@ class EvaluationEnvironment:
         self._boundary_config.to_json(self._boundary_config_path)
 
         # Initialize the environment
-        self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0', domain_config_path=str(self._boundary_config_path))
-
+        # self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0', domain_config_path=str(self._boundary_config_path))
+        self._env = ProcgenEnv(num_envs=1,
+                              env_name=str(self._boundary_config.game),
+                              domain_config_path=str(self._boundary_config_path))
+        self._env = VecExtractDictObs(self._env, "rgb")
+        self._env = TransposeFrame(self._env)
+        self._env = ScaledFloatFrame(self._env)
         # Initialize the performance buffers
         self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
 
@@ -181,6 +186,8 @@ class EvaluationEnvironment:
 
     def _generate_trajectories(self, policy: CategoricalPolicy, hidden_state: np.ndarray, buffer: PerformanceBuffer):
         obs = self._env.reset()
+        print(f'obs shape: {obs.shape}')
+        # obs = torch.unsqueeze(obs, 0)
         rewards = []
         last_steps = []
         for _ in range(self._eval_config.n_trajectories):
@@ -301,9 +308,9 @@ class PPOADR(PPO):
         self._adr_prob = adr_prob
         self._performance_thresholds = performance_thresholds
 
-        self._obs = training_env.reset()
-        self._hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
-        self._done = np.zeros(self.n_envs)
+        self._obs = None
+        self._hidden_state = None
+        self._done = None
 
     def _generate_training_data(self):
         for _ in range(self.n_steps):
@@ -352,7 +359,7 @@ class PPOADR(PPO):
             self.policy.eval()
 
             x = random.uniform(0., 1.)
-            if x < self._adr_prob:
+            if x < self._adr_prob and self._hidden_state is not None:
                 self._evaluate_performance()
             else:
                 self._generate_training_data()
@@ -377,4 +384,4 @@ class PPOADR(PPO):
                            self.logger.logdir + '/model_' + str(self.t) + '.pth')
                 checkpoint_cnt += 1
 
-        self.env.close()
+        # self.env.close()
