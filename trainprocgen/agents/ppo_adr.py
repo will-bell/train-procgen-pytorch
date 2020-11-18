@@ -217,7 +217,7 @@ class EvaluationEnvironment:
 
 def make_environments(env_name: str,
                       initial_domain_config: DomainConfig = None,
-                      tunable_parameters: List['str'] = None,
+                      tunable_parameters: List[EnvironmentParameter] = None,
                       experiment_dir: Union[pathlib.Path, str] = None,
                       eval_config: EvaluationConfig = None,
                       n_training_envs: int = 8):
@@ -229,12 +229,14 @@ def make_environments(env_name: str,
             raise KeyError(f'No default config exists for {env_name}')
 
     if experiment_dir is None:
-        experiment_dir = pathlib.Path().absolute() / 'adr_experiments' / 'experiment-' + datetime_name()
+        experiment_dir = pathlib.Path().absolute() / 'adr_experiments' / ('experiment-' + datetime_name())
         experiment_dir.mkdir(parents=True, exist_ok=False)
     else:
         experiment_dir = pathlib.Path(experiment_dir)
 
     config_dir = experiment_dir / 'domain_configs'
+    config_dir.mkdir(parents=True, exist_ok=False)
+
     train_config_path = config_dir / 'train_config.json'
 
     initial_domain_config.to_json(train_config_path)
@@ -242,7 +244,7 @@ def make_environments(env_name: str,
     torch.set_num_threads(1)
     training_env = ProcgenEnv(num_envs=n_training_envs,
                               env_name=env_name,
-                              domain_config=train_config_path)
+                              domain_config_path=str(train_config_path))
     training_env = VecExtractDictObs(training_env, "rgb")
     training_env = TransposeFrame(training_env)
     training_env = ScaledFloatFrame(training_env)
