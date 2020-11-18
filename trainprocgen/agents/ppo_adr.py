@@ -353,6 +353,7 @@ class PPOADR(PPO):
         self._obs = self.env.reset()
         self._hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
         self._done = np.zeros(self.n_envs)
+        self.storage.reset()
 
         while self.t < num_timesteps:
             # Run Policy
