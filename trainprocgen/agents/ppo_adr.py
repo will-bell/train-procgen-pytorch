@@ -1,200 +1,274 @@
-from typing import Union, Dict
+import pathlib
 import random
+from typing import Union, Dict, List, Tuple, Optional
 
-import numpy as np
-import pandas as pd
-import torch
-from torch import nn
-import os
+from procgen import ProcgenEnv
+from procgen.domains import DomainConfig, BossfightDomainConfig, datetime_name
 
+from trainprocgen.common.env.procgen_wrappers import *
 from trainprocgen.common.misc_util import adjust_lr
+from trainprocgen.common.policy import CategoricalPolicy
 from .ppo import PPO
-from procgen.domains import DomainConfig
-
-from ADR import ADRParameter, ADREnvParameter, MAX_SIZE_BUFFER
 
 Number = Union[int, float]
 
+DEFAULT_DOMAIN_CONFIGS = {
+    'dc_bossfight': BossfightDomainConfig()
+}
 
-class ADRManager:
-    def __init__(self, parameters_list: list, policy: nn.Module, n_envs: int, hidden_state_size: int):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.parameters_list = parameters_list
-        self.parameters = {}
-        for param in parameters_list:
-            self.parameters[param.name] = param
 
-        column_names = [param.name + '_low' for param in self.parameters_list] \
-            + [param.name + '_hi' for param in self.parameters_list]
-        self.result_dataframe = pd.DataFrame(columns=column_names)
-        self.running_dataframes = []
+class EnvironmentParameter:
 
-        self.num_trajectory = MAX_SIZE_BUFFER  # idk change this later? Do all trajectories at once??
-        self.policy = policy
-        self.n_envs = n_envs
-        self.hidden_state_size = hidden_state_size
+    lower_bound: Number
+    upper_bound: Number
 
-    def predict(self, obs, hidden_state, done):
+    delta: Number
+
+    def __init__(self, name: str, initial_bounds: Tuple[Number, Number], clip_bounds: Tuple[Number, Number], delta: Number, discrete: bool):
+        self.name = name
+        self.lower_bound, self.upper_bound = initial_bounds
+        self.clip_lower_bound, self.clip_upper_bound = clip_bounds
+        self.discrete = discrete
+        self.delta = delta
+
+    def increase_lower_bound(self):
+        self.lower_bound = np.min(self.lower_bound + self.delta, self.upper_bound)
+
+    def decrease_lower_bound(self):
+        self.lower_bound = np.max(self.lower_bound - self.delta, self.lower_bound)
+
+    def increase_upper_bound(self):
+        self.upper_bound = np.min(self.upper_bound + self.delta, self.clip_upper_bound)
+
+    def decrease_upper_bound(self):
+        self.upper_bound = np.max(self.upper_bound - self.delta, self.lower_bound)
+
+
+class PerformanceBuffer:
+
+    def __init__(self):
+        self._buffer = []
+
+    def push_back(self, value: float):
+        self._buffer.append(value)
+
+    def is_full(self, size: int) -> bool:
+        return len(self._buffer) >= size
+
+    def calculate_average_performance(self) -> float:
+        buffer = np.array(self._buffer)
+        self.clear()
+        return np.mean(buffer).item()
+
+    def clear(self):
+        self._buffer = []
+
+
+class EvaluationConfig:
+
+    n_trajectories: int
+    max_buffer_size: int
+
+    def __init__(self, n_trajectories: int = 100, max_buffer_size: int = 10):
+        self.n_trajectories = n_trajectories
+        self.max_buffer_size = max_buffer_size
+
+
+class EvaluationEnvironment:
+
+    _env_parameter: EnvironmentParameter
+
+    _train_config_path: pathlib.Path
+
+    _eval_config: EvaluationConfig
+
+    _param_name: str
+
+    _boundary_config_path: str
+    _boundary_config: DomainConfig
+
+    _upper_performance_buffer: PerformanceBuffer
+    _lower_performance_buffer: PerformanceBuffer
+
+    def __init__(self, env_parameter: EnvironmentParameter, train_config_path: str, eval_config: EvaluationConfig = None):
+        self._env_parameter = env_parameter
+        self._param_name = self._env_parameter.name
+        self._eval_config = eval_config if eval_config is not None else EvaluationConfig()
+
+        self._train_config_path = pathlib.Path(train_config_path)
+        config_dir = self._train_config_path.parent
+        config_name = self._param_name + '_adr_eval_config.json'
+
+        # Initialize the config for the evaluation environment
+        # This config will be updated regularly throughout training. When we boundary sample this environment's
+        # parameter, the config will be modified to set the parameter to the selected boundary before running a number
+        # of trajectories.
+        self._boundary_config = DomainConfig.from_json(self._train_config_path)
+        self._boundary_config_path = config_dir / config_name
+        self._boundary_config.to_json(self._boundary_config_path)
+
+        # Initialize the environment
+        self._env = gym.make('procgen:' + self._boundary_config.game, domain_config_path=str(self._boundary_config_path))
+
+        # Initialize the performance buffers
+        self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
+
+    def evaluate_performance(self, policy: CategoricalPolicy, hidden_state: np.ndarray) -> Optional[Tuple[float, bool]]:
+        """Main method for running the ADR algorithm
+
+        Args:
+            policy:
+            hidden_state:
+
+        Returns:
+
+        """
+        # Load the current training config to get any changes to the environment parameters
+        updated_train_config = DomainConfig.from_json(self._train_config_path)
+        updated_params = updated_train_config.parameters
+
+        x = random.uniform(0., 1.)
+        if x < .5:
+            lower = True
+            value = self._env_parameter.lower_bound
+            buffer = self._lower_performance_buffer
+        else:
+            lower = False
+            value = self._env_parameter.upper_bound
+            buffer = self._upper_performance_buffer
+
+        updated_params['min_' + self._param_name] = value
+        updated_params['max_' + self._param_name] = value
+        self._boundary_config.update_parameters(updated_params, cache=False)
+
+        self._generate_trajectories(policy, hidden_state, buffer)
+
+        if buffer.is_full(self._eval_config.max_buffer_size):
+            performance = buffer.calculate_average_performance()
+            return performance, lower
+
+        return None
+
+    def update_lower_bound(self, performance: float, thresholds: Tuple[float, float]) -> Number:
+        low_threshold, high_threshold = thresholds
+        if performance >= high_threshold:
+            self._env_parameter.increase_lower_bound()
+        elif performance <= low_threshold:
+            self._env_parameter.decrease_lower_bound()
+
+        return self._env_parameter.lower_bound
+
+    def update_upper_bound(self, performance: float, thresholds: Tuple[float, float]) -> Number:
+        low_threshold, high_threshold = thresholds
+        if performance >= high_threshold:
+            self._env_parameter.increase_upper_bound()
+        elif performance <= low_threshold:
+            self._env_parameter.decrease_upper_bound()
+
+        return self._env_parameter.upper_bound
+
+    @staticmethod
+    def _predict(policy, obs, hidden_state, done):
         with torch.no_grad():
-            obs = torch.FloatTensor(obs).to(device=self.device)
-            hidden_state = torch.FloatTensor(hidden_state).to(device=self.device)
-            mask = torch.FloatTensor(1 - done).to(device=self.device)
-            dist, value, hidden_state = self.policy(obs, hidden_state, mask)
+            obs = torch.FloatTensor(obs)
+            hidden_state = torch.FloatTensor(hidden_state)
+            mask = torch.FloatTensor(1 - done)
+            dist, value, hidden_state = policy(obs, hidden_state, mask)
             act = dist.sample()
             log_prob_act = dist.log_prob(act)
 
         return act.cpu().numpy(), log_prob_act.cpu().numpy(), value.cpu().numpy(), hidden_state.cpu().numpy()
 
-    def evaluate_performance(self, env):
-        # Call self.append_performance here too
-        done = False
-
-        average_returns = []
-        for trajectory in range(self.num_trajectory):
-            obs = env.reset()
-            obs = obs['rgb']
-            hidden_state = np.zeros((self.n_envs, self.hidden_state_size))
-            done = np.zeros(self.n_envs)
-
-            value_batch = []
-            rew_batch = []
-            done_batch = []
-
-            for i in range(20):
-                act, log_prob_act, value, next_hidden_state = self.predict(obs, hidden_state, done)
-                next_obs, rew, done, info = env.step(act)
-                next_obs = next_obs['rgb']
-                # self.storage.store(obs, hidden_state, act, rew, done, info, log_prob_act, value)
-                value_batch.append(value)
-                rew_batch.append(rew)
-                done_batch.append(done)
+    def _generate_trajectories(self, policy: CategoricalPolicy, hidden_state: np.ndarray, buffer: PerformanceBuffer):
+        obs = self._env.reset()
+        rewards = []
+        last_steps = []
+        for _ in range(self._eval_config.n_trajectories):
+            done = False
+            while not done:
+                act, _, _, next_hidden_state = self._predict(policy, obs, hidden_state, done)
+                next_obs, rew, done, _ = self._env.step(act)
                 obs = next_obs
                 hidden_state = next_hidden_state
 
-            return_batch = self.compute_estimates(value_batch, rew_batch, done_batch)
-            average_return = np.mean(return_batch)
-            average_returns.append(average_return)
+                rewards.append(rew)
+                last_steps.append(done)
 
-        return np.mean(average_returns)
+            obs = self._env.reset()
 
-    def compute_estimates(self, value_batch: list, rew_batch: list,
-                          done_batch: list, gamma=0.99):
-        return_batch = [0] * len(value_batch)
-        G = value_batch[-1]
-        for i in reversed(range(len(value_batch))):
-            rew = rew_batch[i]
-            done = done_batch[i]
+        mean_return = self._calculate_average_return(rewards, last_steps)
+        buffer.push_back(mean_return)
 
-            G = rew + gamma * G * (1 - done)
-            return_batch[i] = G
+    @staticmethod
+    def _calculate_average_return(rewards: List[float], last_steps: List[bool]) -> float:
+        G = rewards[-1]
+        returns = []
+        for i in reversed(range(len(rewards))):
+            rew = rewards[i]
+            done = last_steps[i]
 
-        return return_batch
+            G = rew + .99 * G * (1 - done)
+            returns.append(G)
 
-    def get_environment_parameters(self) -> Dict[str, ADREnvParameter]:
-        return self.parameters
+        returns = np.array(returns)
 
-    def append_performance(self, feature_ind: int, is_high: bool, performance: float):
-        """Append performance to performance buffer of boundary sampled feature
+        return np.mean(returns).item()
 
-        Args:
-            feature_ind (int): feature index
-            is_high (bool): high or low flag for choosing between phi_L or phi_H
-            performance (float): performance calculation
-        """
-        reached_max_buffer = self.parameters_list[feature_ind] \
-            .get_param(is_high) \
-            .append_performance(performance)
 
-        if reached_max_buffer:
-            d = dict()
-            for param in self.parameters:
-                d[param.name + '_low'] = param.get_param(is_high=False).value
-                d[param.name + '_hi'] = param.get_param(is_high=True).value
+def make_environments(env_name: str,
+                      initial_domain_config: DomainConfig = None,
+                      tunable_parameters: List['str'] = None,
+                      experiment_dir: Union[pathlib.Path, str] = None,
+                      eval_config: EvaluationConfig = None,
+                      n_training_envs: int = 8):
 
-            d['performance'] = performance
-            self.running_dataframes.append(d)
+    if initial_domain_config is None:
+        try:
+            initial_domain_config = DEFAULT_DOMAIN_CONFIGS[env_name]
+        except KeyError:
+            raise KeyError(f'No default config exists for {env_name}')
 
-            # Add new dataframes to running list of dataframes
-            # Either concat now or write to csv
-            if len(self.running_dataframes) >= 10:
-                self.running_dataframes = pd.DataFrame(self.running_dataframes)
-                # frames = [self.result_dataframe, self.running_dataframes]
-                # self.result_dataframe = pd.concat(frames)
+    if experiment_dir is None:
+        experiment_dir = pathlib.Path().absolute() / 'adr_experiments' / 'experiment-' + datetime_name()
+        experiment_dir.mkdir(parents=True, exist_ok=False)
+    else:
+        experiment_dir = pathlib.Path(experiment_dir)
 
-                # If result file already exists, append to the file
-                # Or else write a new file
-                if os.path.exists('results.csv'):
-                    self.running_dataframes.to_csv('results.csv', mode='a', header=False)
-                else:
-                    self.running_dataframes.to_csv('results.csv')
+    config_dir = experiment_dir / 'domain_configs'
+    train_config_path = config_dir / 'train_config.json'
 
-                # Reset dataframes
-                self.running_dataframes = []
+    initial_domain_config.to_json(train_config_path)
 
-    def select_boundary_sample(self):
-        """ Selects feature index to boundary sample. Also uniformly selects a probability
-        between 0 < x < 1 for low and high of phi
+    torch.set_num_threads(1)
+    training_env = ProcgenEnv(num_envs=n_training_envs,
+                              env_name=env_name,
+                              domain_config=train_config_path)
+    training_env = VecExtractDictObs(training_env, "rgb")
+    training_env = TransposeFrame(training_env)
+    training_env = ScaledFloatFrame(training_env)
 
-        Returns:
-            int: feature index
-            float: probability to choose between phi_L and phi_H
-        """
+    evaluation_envs = {}
+    for param in tunable_parameters:
+        evaluation_envs[param] = EvaluationEnvironment(param, train_config_path, eval_config)
 
-        # Reset adr flag
-        for param in self.parameters:
-            self.parameters[param].set_adr_flag(False)
-
-        feature_to_boundary_sample = torch.randint(0, len(self.parameters_list), size=(1,)).item()
-        self.parameters_list[feature_to_boundary_sample].set_adr_flag(True)
-
-        probability = torch.rand(1).item()  # 0 <= x < 1
-
-        return feature_to_boundary_sample, probability
-
-    def create_config(self, feature_to_boundary_sample: int, probability: float):
-        config = {}
-
-        # TODO how to handle append_performance in ADRParameter ??
-        for i, env_parameter in enumerate(self.parameters_list):
-            _lambda = env_parameter.sample(probability)
-            if i == feature_to_boundary_sample:
-                # boundary_sample returns ADRParameter, so call return_val to get its value
-                _lambda = _lambda.return_val()
-
-            config[env_parameter.name] = _lambda
-        return config
-
-    def adr_entropy(self):
-        """ Calculate ADR Entrophy
-
-        Returns:
-            float: entropy =  1/d \sum_{i=1}^{d} log(phi_ih - phi_il)
-        """
-        d = len(self.parameters_list)
-        phi_H = []
-        phi_L = []
-
-        for i in range(d):
-            phi_H.append(self.parameters_list[i].phi_h.return_val())
-            phi_L.append(self.parameters_list[i].phi_l.return_val())
-
-        phi_H = torch.tensor(phi_H, dtype=torch.float)
-        phi_L = torch.tensor(phi_L, dtype=torch.float)
-
-        entropy = torch.mean(torch.log(phi_H - phi_L))
-        return entropy
+    return training_env, initial_domain_config, evaluation_envs
 
 
 class PPOADR(PPO):
 
+    _train_domain_config: DomainConfig
+    _evaluation_envs: Dict[str, EvaluationEnvironment]
+    _performance_thresholds: Tuple[float, float]
+
     def __init__(self,
-                 env,
+                 training_env,
+                 initial_domain_config,
+                 evaluation_envs,
                  policy,
                  logger,
                  storage,
                  device,
                  n_checkpoints,
-                 domain_config: DomainConfig,
                  n_steps=128,
                  n_envs=8,
                  epoch=3,
@@ -211,46 +285,75 @@ class PPOADR(PPO):
                  normalize_rew=True,
                  use_gae=True,
                  adr_prob: float = 0.5,
-                 parameters_list=None,
+                 performance_thresholds: Tuple[float, float] = (2.5, 8.),
                  **kwargs):
 
-        super().__init__(env, policy, logger, storage, device, n_checkpoints, n_steps, n_envs, epoch,
+        super().__init__(training_env, policy, logger, storage, device, n_checkpoints, n_steps, n_envs, epoch,
                          mini_batch_per_epoch, mini_batch_size, gamma, lmbda, learning_rate, grad_clip_norm, eps_clip,
                          value_coef, entropy_coef, normalize_adv, normalize_rew, use_gae, **kwargs)
 
-        self.adr_prob = adr_prob
-        parameters_list = [] if parameters_list is None else parameters_list
-        self.adr_manager = ADRManager(parameters_list, policy, n_envs, storage.hidden_state_size)
-        self.domain_config = domain_config
+        self._train_domain_config = initial_domain_config
+        self._evaluation_envs = evaluation_envs
+        self._tunable_params = list(evaluation_envs.keys())
+        self._n_tunable_params = len(self._tunable_params)
+        self._adr_prob = adr_prob
+        self._performance_thresholds = performance_thresholds
 
+        self._obs = None
         self._hidden_state = None
+        self._done = None
 
     def _generate_training_data(self):
-        obs = self.env.reset()
-        done = np.zeros(self.n_envs)
         for _ in range(self.n_steps):
-            act, log_prob_act, value, next_hidden_state = self.predict(obs, self._hidden_state, done)
+            act, log_prob_act, value, next_hidden_state = self.predict(self._obs, self._hidden_state, self._done)
             next_obs, rew, done, info = self.env.step(act)
-            self.storage.store(obs, self._hidden_state, act, rew, done, info, log_prob_act, value)
-            obs = next_obs
+            self.storage.store(self._obs, self._hidden_state, act, rew, self._done, info, log_prob_act, value)
+            self._obs = next_obs
             self._hidden_state = next_hidden_state
-        _, _, last_val, hidden_state = self.predict(obs, self._hidden_state, done)
-        self.storage.store_last(obs, hidden_state, last_val)
+        _, _, last_val, self._hidden_state = self.predict(self._obs, self._hidden_state, self._done)
+        self.storage.store_last(self._obs, self._hidden_state, last_val)
+
+    def _evaluate_performance(self):
+        # Randomly select a parameter to boundary sample
+        param_idx = random.randint(self._n_tunable_params)
+        param_name = self._tunable_params[param_idx]
+
+        # Get the environment for the selected parameter then evaluate the policy within it. This will boundary sample
+        # the selected parameter and generate a number of trajectories with the upper/lower boundary to calculate its
+        # performance in the environment.
+        evaluation_env = self._evaluation_envs[param_name]
+        info = evaluation_env.evaluate_performance(self.policy, self._hidden_state)
+
+        # If we get something back, then the performance buffer for either the lower or upper boundary of the parameter
+        # is filled. Update the parameter according to the set thresholds.
+        if info:
+            performance, lower = info
+            if lower:  # Updating the lower boundary according to set performance thresholds
+                prefix = 'min_'
+                new_value = evaluation_env.update_lower_bound(performance, self._performance_thresholds)
+            else:      # Updating the upper boundary according to set performance thresholds
+                prefix = 'max_'
+                new_value = evaluation_env.update_upper_bound(performance, self._performance_thresholds)
+
+            # Update the config for the training environment with the new value for the boundary-sampled parameter.
+            self._train_domain_config.update_parameters({prefix + param_name: new_value})
 
     def train(self, num_timesteps: int):
         save_every = num_timesteps // self.num_checkpoints
         checkpoint_cnt = 0
+        self._obs = self.env.reset()
         self._hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
+        self._done = np.zeros(self.n_envs)
 
         while self.t < num_timesteps:
             # Run Policy
             self.policy.eval()
 
             x = random.uniform(0., 1.)
-            if x < self.adr_prob:
-                self._generate_training_data()
+            if x < self._adr_prob and self._hidden_state:
+                self._evaluate_performance()
             else:
-                pass
+                self._generate_training_data()
 
             # Compute advantage estimates
             self.storage.compute_estimates(self.gamma, self.lmbda, self.use_gae, self.normalize_adv)

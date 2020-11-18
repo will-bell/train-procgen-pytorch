@@ -3,178 +3,384 @@ Implementation of Automatic Domain Randomization (https://arxiv.org/pdf/1910.071
 """
 
 import torch
+import gym
+from procgen.domains import DomainConfig
+import pathlib
+from typing import Union, Tuple, List, Optional
+import random
+from torch import nn
+import numpy as np
+from trainprocgen.common.policy import CategoricalPolicy
 from trainprocgen.common.storage import Storage
 
 import os
 
 MAX_SIZE_BUFFER = 10
 
-class ADRParameter:
-    """ Phi_L or Phi_H in the literature (section 5.2)
-    
-        Args:
-            value (float): value of Phi
-            step_size (float): step_size value to perturb phi when performance exceeds threshold
-            boundaries (dict): keys = {'lower_bound', 'upper_bound'}
-    """
-    def __init__(self, value: float, step_size: float, boundaries: dict,  thresh_low: float, thresh_high: float):
-        self.value = value
-        self.step_size = step_size #some delta to perturb Phi 
-        self.boundaries = boundaries
-        self.thresh_low = thresh_low
-        self.thresh_high = thresh_high
-        # Each parameter has a buffer, which the performance will be averaged over
-        # after its length reaches max_size_buffer
-        self.performance_buffer = []
-        self.max_size_buffer = MAX_SIZE_BUFFER # The papers default value is 240
-        
-        # self.storage = Storage()
-        
-    def return_val(self):
-        return self.value
+Number = Union[int, float]
 
-    def append_performance(self, performance: float):
-        """Add performance of PPO algorithm to buffer
 
-        Args:
-            performance (float): performance of PPO algorithm
-        """
-        # Test data
-        # self.performance_buffer = [0.0]* 240
-        
-        self.performance_buffer.append(performance)
-        if len(self.performance_buffer) >= self.max_size_buffer:
-            self.reach_max_buffer()
-            return True
-        return False
-        
-    def reach_max_buffer(self):
-        """When buffer is at length = self.max_size_buffer,
-            calculate average performance values and check against thresholds.
-            
-        Args:
-            thresh_low (float): Low performance threshold
-            thresh_high (float): High performance threshold
+class EnvironmentParameter:
 
-        """
-        performance_average = torch.mean(torch.tensor(self.performance_buffer))
-        self.performance_buffer = []
+    lower_bound: Number
+    upper_bound: Number
 
-        if performance_average >= self.thresh_high:
-            self.value = self.value + self.step_size
-        elif performance_average <= self.thresh_low:
-            self.value = self.value - self.step_size
-        
-        # print('--------Test Clipping--------')
-        # print('preclip', self.value)
-        self.value = torch.clip(torch.tensor(self.value), 
-                                torch.tensor(self.boundaries['lower_bound']), 
-                                torch.tensor(self.boundaries['upper_bound']))
-        # print('after clip', self.value)
+    delta: Number
 
-class ADREnvParameter:
-    """
-    Each Environment parameter contains 2 ADR Parameters (Phi_L, Phi_H)
-    for a total of 2d parameters. (section 5.2)
-    
-    Args:
-        value (float): starting value of phi's
-        lower_bound (float): smallest lower bound possible
-        upper_bound (float): largest upper bound possible
-        step_size (float): determines how much phi changes
-    """
-    
-    def __init__(self, name: str, value: float, lower_bound: float, upper_bound: float, 
-                    step_size: float,  thresh_low: float, thresh_high: float, is_continuous: bool):
+    def __init__(self, name: str, initial_bounds: Tuple[Number, Number], clip_bounds: Tuple[Number, Number], delta: Number, discrete: bool):
         self.name = name
-        self.value = value
-        self.lower_bound = lower_bound
-        self.upper_bound = upper_bound
-        self.is_continuous = is_continuous
-        
-        # adr_flag is to flag the SINGLE dimension/variable that will be Phi_L or Phi_R
-        # if the flag is not set, then the value will be selected from U[Phi_L, Phi_R]
-        self.adr_flag = False
-        
-        boundary_left  = dict(lower_bound = self.lower_bound, upper_bound = self.value)
-        boundary_right = dict(lower_bound = self.value, upper_bound = self.upper_bound)
+        self.lower_bound, self.upper_bound = initial_bounds
+        self.clip_lower_bound, self.clip_upper_bound = clip_bounds
+        self.discrete = discrete
+        self.delta = delta
 
-        self.phi_l = ADRParameter(self.value, step_size, boundaries = boundary_left, thresh_low=thresh_low, thresh_high=thresh_high) # low
-        self.phi_h = ADRParameter(self.value, step_size, boundaries = boundary_right, thresh_low=thresh_low, thresh_high=thresh_high) # high
-    
-    def set_adr_flag(self, flag: bool):
-        self.adr_flag = flag
+    def increase_lower_bound(self):
+        self.lower_bound = np.min(self.lower_bound + self.delta, self.upper_bound)
 
-    def sample(self, probability: float):
-        if self.adr_flag:
-            return self.boundary_sample(probability)
-        else:
-            return self.uniform_sample()
+    def decrease_lower_bound(self):
+        self.lower_bound = np.max(self.lower_bound - self.delta, self.lower_bound)
 
-    def boundary_sample(self, probability: float):
-        """Select phi_l or phi_r with equal probability
+    def increase_upper_bound(self):
+        self.upper_bound = np.min(self.upper_bound + self.delta, self.clip_upper_bound)
+
+    def decrease_upper_bound(self):
+        self.upper_bound = np.max(self.upper_bound - self.delta, self.lower_bound)
+
+
+class PerformanceBuffer:
+
+    def __init__(self):
+        self._buffer = []
+
+    def push_back(self, value: float):
+        self._buffer.append(value)
+
+    def is_full(self, size: int) -> bool:
+        return len(self._buffer) >= size
+
+    def calculate_average_performance(self) -> float:
+        buffer = np.array(self._buffer)
+        self.clear()
+        return np.mean(buffer).item()
+
+    def clear(self):
+        self._buffer = []
+
+
+class EvaluationConfig:
+
+    n_trajectories: int
+    max_buffer_size: int
+
+    def __init__(self, n_trajectories: int = 100, max_buffer_size: int = 10):
+        self.n_trajectories = n_trajectories
+        self.max_buffer_size = max_buffer_size
+
+
+class EvaluationEnvironment:
+
+    _env_parameter: EnvironmentParameter
+
+    _train_config_path: pathlib.Path
+
+    _eval_config: EvaluationConfig
+
+    _param_name: str
+
+    _boundary_config_path: str
+    _boundary_config: DomainConfig
+
+    _upper_performance_buffer: PerformanceBuffer
+    _lower_performance_buffer: PerformanceBuffer
+
+    def __init__(self, env_parameter: EnvironmentParameter, train_config_path: str, eval_config: EvaluationConfig = None):
+        self._env_parameter = env_parameter
+        self._param_name = self._env_parameter.name
+        self._eval_config = eval_config if eval_config is not None else EvaluationConfig()
+
+        self._train_config_path = pathlib.Path(train_config_path)
+        config_dir = self._train_config_path.parent
+        config_name = self._param_name + '_adr_eval_config.json'
+
+        # Initialize the config for the evaluation environment
+        # This config will be updated regularly throughout training. When we boundary sample this environment's
+        # parameter, the config will be modified to set the parameter to the selected boundary before running a number
+        # of trajectories.
+        self._boundary_config = DomainConfig.from_json(self._train_config_path)
+        self._boundary_config_path = config_dir / config_name
+        self._boundary_config.to_json(self._boundary_config_path)
+
+        # Initialize the environment
+        self._env = gym.make('procgen:' + self._boundary_config.game, domain_config_path=str(self._boundary_config_path))
+
+        # Initialize the performance buffers
+        self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
+
+    def evaluate_performance(self, policy: CategoricalPolicy, hidden_state: np.ndarray) -> Optional[Tuple[float, bool]]:
+        """Main method for running the ADR algorithm
+
+        Args:
+            policy:
+            hidden_state:
 
         Returns:
-            ADRParameter: phi_l or phi_r
+
         """
-        print('probability: ', probability)
-        if probability < 0.5:
-            print('lower bound sample')
-            lam = self.phi_l
+        # Load the current training config to get any changes to the environment parameters
+        updated_train_config = DomainConfig.from_json(self._train_config_path)
+        updated_params = updated_train_config.parameters
+
+        x = random.uniform(0., 1.)
+        if x < .5:
+            lower = True
+            value = self._env_parameter.lower_bound
+            buffer = self._lower_performance_buffer
         else:
-            print('upper bound sample')
-            lam = self.phi_h
-        print('boundary sample: ', lam.return_val())
-        return lam
-            
-    def uniform_sample(self):
-        """ Sample with a uniform distribution between [phi_l, phi_h]
+            lower = False
+            value = self._env_parameter.upper_bound
+            buffer = self._upper_performance_buffer
+
+        updated_params['min_' + self._param_name] = value
+        updated_params['max_' + self._param_name] = value
+        self._boundary_config.update_parameters(updated_params, cache=False)
+
+        self._generate_trajectories(policy, hidden_state, buffer)
+
+        if buffer.is_full(self._eval_config.max_buffer_size):
+            performance = buffer.calculate_average_performance()
+            return performance, lower
+
+        return None
+
+    def update_lower_bound(self, performance: float, thresholds: Tuple[float, float]) -> Number:
+        low_threshold, high_threshold = thresholds
+        if performance >= high_threshold:
+            self._env_parameter.increase_lower_bound()
+        elif performance <= low_threshold:
+            self._env_parameter.decrease_lower_bound()
+
+        return self._env_parameter.lower_bound
+
+    def update_upper_bound(self, performance: float, thresholds: Tuple[float, float]) -> Number:
+        low_threshold, high_threshold = thresholds
+        if performance >= high_threshold:
+            self._env_parameter.increase_upper_bound()
+        elif performance <= low_threshold:
+            self._env_parameter.decrease_upper_bound()
+
+        return self._env_parameter.upper_bound
+
+    @staticmethod
+    def _predict(policy, obs, hidden_state, done):
+        with torch.no_grad():
+            obs = torch.FloatTensor(obs)
+            hidden_state = torch.FloatTensor(hidden_state)
+            mask = torch.FloatTensor(1 - done)
+            dist, value, hidden_state = policy(obs, hidden_state, mask)
+            act = dist.sample()
+            log_prob_act = dist.log_prob(act)
+
+        return act.cpu().numpy(), log_prob_act.cpu().numpy(), value.cpu().numpy(), hidden_state.cpu().numpy()
+
+    def _generate_trajectories(self, policy: CategoricalPolicy, hidden_state: np.ndarray, buffer: PerformanceBuffer):
+        obs = self._env.reset()
+        rewards = []
+        last_steps = []
+        for _ in range(self._eval_config.n_trajectories):
+            done = False
+            while not done:
+                act, _, _, next_hidden_state = self._predict(policy, obs, hidden_state, done)
+                next_obs, rew, done, _ = self._env.step(act)
+                obs = next_obs
+                hidden_state = next_hidden_state
+
+                rewards.append(rew)
+                last_steps.append(done)
+
+            obs = self._env.reset()
+
+        mean_return = self._calculate_average_return(rewards, last_steps)
+        buffer.push_back(mean_return)
+
+    @staticmethod
+    def _calculate_average_return(rewards: List[float], last_steps: List[bool]) -> float:
+        G = rewards[-1]
+        returns = []
+        for i in reversed(range(len(rewards))):
+            rew = rewards[i]
+            done = last_steps[i]
+
+            G = rew + .99 * G * (1 - done)
+            returns.append(G)
+
+        returns = np.array(returns)
+
+        return np.mean(returns).item()
+
+
+class ADRManager:
+    def __init__(self, parameters_list: list, policy: CategoricalPolicy, n_envs: int, hidden_state_size: int):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.parameters_list = parameters_list
+        self.parameters = {}
+        for param in parameters_list:
+            self.parameters[param.name] = param
+
+        column_names = [param.name + '_low' for param in self.parameters_list] \
+            + [param.name + '_hi' for param in self.parameters_list]
+        self.result_dataframe = pd.DataFrame(columns=column_names)
+        self.running_dataframes = []
+
+        self.num_trajectory = MAX_SIZE_BUFFER  # idk change this later? Do all trajectories at once??
+        self.policy = policy
+        self.n_envs = n_envs
+        self.hidden_state_size = hidden_state_size
+
+    def predict(self, obs, hidden_state, done):
+        with torch.no_grad():
+            obs = torch.FloatTensor(obs).to(device=self.device)
+            hidden_state = torch.FloatTensor(hidden_state).to(device=self.device)
+            mask = torch.FloatTensor(1 - done).to(device=self.device)
+            dist, value, hidden_state = self.policy(obs, hidden_state, mask)
+            act = dist.sample()
+            log_prob_act = dist.log_prob(act)
+
+        return act.cpu().numpy(), log_prob_act.cpu().numpy(), value.cpu().numpy(), hidden_state.cpu().numpy()
+
+    def evaluate_performance(self, env):
+        # Call self.append_performance here too
+        done = False
+
+        average_returns = []
+        for trajectory in range(self.num_trajectory):
+            obs = env.reset()
+            obs = obs['rgb']
+            hidden_state = np.zeros((self.n_envs, self.hidden_state_size))
+            done = np.zeros(self.n_envs)
+
+            value_batch = []
+            rew_batch = []
+            done_batch = []
+
+            for i in range(20):
+                act, log_prob_act, value, next_hidden_state = self.predict(obs, hidden_state, done)
+                next_obs, rew, done, info = env.step(act)
+                next_obs = next_obs['rgb']
+                # self.storage.store(obs, hidden_state, act, rew, done, info, log_prob_act, value)
+                value_batch.append(value)
+                rew_batch.append(rew)
+                done_batch.append(done)
+                obs = next_obs
+                hidden_state = next_hidden_state
+
+            return_batch = self.compute_estimates(value_batch, rew_batch, done_batch)
+            average_return = np.mean(return_batch)
+            average_returns.append(average_return)
+
+        return np.mean(average_returns)
+
+    def compute_estimates(self, value_batch: list, rew_batch: list, done_batch: list, gamma=0.99):
+        return_batch = [0] * len(value_batch)
+        G = value_batch[-1]
+        for i in reversed(range(len(value_batch))):
+            rew = rew_batch[i]
+            done = done_batch[i]
+
+            G = rew + gamma * G * (1 - done)
+            return_batch[i] = G
+
+        return return_batch
+
+    def get_environment_parameters(self) -> Dict[str, ADREnvParameter]:
+        return self.parameters
+
+    def append_performance(self, feature_ind: int, is_high: bool, performance: float):
+        """Append performance to performance buffer of boundary sampled feature
+
+        Args:
+            feature_ind (int): feature index
+            is_high (bool): high or low flag for choosing between phi_L or phi_H
+            performance (float): performance calculation
+        """
+        reached_max_buffer = self.parameters_list[feature_ind] \
+            .get_param(is_high) \
+            .append_performance(performance)
+
+        if reached_max_buffer:
+            d = dict()
+            for param in self.parameters:
+                d[param.name + '_low'] = param.get_param(is_high=False).value
+                d[param.name + '_hi'] = param.get_param(is_high=True).value
+
+            d['performance'] = performance
+            self.running_dataframes.append(d)
+
+            # Add new dataframes to running list of dataframes
+            # Either concat now or write to csv
+            if len(self.running_dataframes) >= 10:
+                self.running_dataframes = pd.DataFrame(self.running_dataframes)
+                # frames = [self.result_dataframe, self.running_dataframes]
+                # self.result_dataframe = pd.concat(frames)
+
+                # If result file already exists, append to the file
+                # Or else write a new file
+                if os.path.exists('results.csv'):
+                    self.running_dataframes.to_csv('results.csv', mode='a', header=False)
+                else:
+                    self.running_dataframes.to_csv('results.csv')
+
+                # Reset dataframes
+                self.running_dataframes = []
+
+    def select_boundary_sample(self):
+        """ Selects feature index to boundary sample. Also uniformly selects a probability
+        between 0 < x < 1 for low and high of phi
 
         Returns:
-            float: value in Uniform Distribution
+            int: feature index
+            float: probability to choose between phi_L and phi_H
         """
-        if self.phi_l.return_val() == self.phi_h.return_val():
-            return self.phi_l.return_val()
-        
-        if self.is_continuous:
-            # sampled_event = self.lower_bound + (self.upper_bound - self.lower_bound)*torch.rand(1)[0]
-            sampled_event = torch.FloatTensor(1).uniform_(self.phi_l.return_val(), self.phi_h.return_val())
-            sampled_event = sampled_event.item()
-        else:
-            # sampled_event = torch.randint(self.phi_l.return_val(), self.phi_h.return_val(), size=(1,)).item()
-            torch.LongTensor(1).random_(self.phi_l.return_val(), self.phi_h.return_val())
 
-        print(sampled_event)
-        return sampled_event
+        # Reset adr flag
+        for param in self.parameters:
+            self.parameters[param].set_adr_flag(False)
 
-    def get_param(self, is_high: bool):
-        if is_high:
-            return self.phi_h
-        return self.phi_l
-    
-    def evaluate_performance(self):
-        # TODO maybe don't implement this here?
-        pass
-    
+        feature_to_boundary_sample = torch.randint(0, len(self.parameters_list), size=(1,)).item()
+        self.parameters_list[feature_to_boundary_sample].set_adr_flag(True)
 
+        probability = torch.rand(1).item()  # 0 <= x < 1
 
-if __name__ == "__main__":
-    torch.manual_seed(0)
-    
-    param1 = ADREnvParameter(value=7, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
-    lam = param1.boundary_sample()
-    lam.append_performance(-1.0)
-    print(param1.phi_h.return_val(), param1.phi_l.return_val())
-    
-    param2 = ADREnvParameter(value=8, lower_bound=1, upper_bound=100, step_size=1, thresh_low = 0, thresh_high=10)
-    lam = param2.boundary_sample()
-    lam.append_performance(999.0)
-    print(param2.phi_h.return_val(), param2.phi_l.return_val())
+        return feature_to_boundary_sample, probability
 
-    param3 = ADREnvParameter(value=9, lower_bound=1, upper_bound=100, step_size=0.5, thresh_low = 0, thresh_high=10)
-    lam = param3.boundary_sample()
-    lam.append_performance(-1.0)
-    print(param3.phi_h.return_val(), param3.phi_l.return_val())
+    def create_config(self, feature_to_boundary_sample: int, probability: float):
+        config = {}
 
-    entropy = adr_entrophy([param1, param2, param3])
-    print(entropy)
+        # TODO how to handle append_performance in ADRParameter ??
+        for i, env_parameter in enumerate(self.parameters_list):
+            _lambda = env_parameter.sample(probability)
+            if i == feature_to_boundary_sample:
+                # boundary_sample returns ADRParameter, so call return_val to get its value
+                _lambda = _lambda.return_val()
+
+            config[env_parameter.name] = _lambda
+        return config
+
+    def adr_entropy(self):
+        """ Calculate ADR Entrophy
+
+        Returns:
+            float: entropy =  1/d \sum_{i=1}^{d} log(phi_ih - phi_il)
+        """
+        d = len(self.parameters_list)
+        phi_H = []
+        phi_L = []
+
+        for i in range(d):
+            phi_H.append(self.parameters_list[i].phi_h.return_val())
+            phi_L.append(self.parameters_list[i].phi_l.return_val())
+
+        phi_H = torch.tensor(phi_H, dtype=torch.float)
+        phi_L = torch.tensor(phi_L, dtype=torch.float)
+
+        entropy = torch.mean(torch.log(phi_H - phi_L))
+        return entropy
