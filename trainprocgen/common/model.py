@@ -101,7 +101,7 @@ class ImpalaModel(nn.Module):
         self.block1 = ImpalaBlock(in_channels=in_channels, out_channels=16)
         self.block2 = ImpalaBlock(in_channels=16, out_channels=32)
         self.block3 = ImpalaBlock(in_channels=32, out_channels=32)
-        self.fc = nn.Linear(in_features=256, out_features=256)
+        self.fc = nn.Linear(in_features=32*8*8, out_features=256)
 
         self.output_dim = 256
         self.apply(xavier_uniform_init)
@@ -111,7 +111,7 @@ class ImpalaModel(nn.Module):
         x = self.block2(x)
         x = self.block3(x)
         x = nn.ReLU()(x)
-        x = Flatten()(x)
+        x = Flatten()(x.contiguous())
         x = self.fc(x)
         x = nn.ReLU()(x)
         return x

@@ -1,4 +1,8 @@
 from trainprocgen.agents import *
+from trainprocgen.common.model import NatureModel, ImpalaModel
+from trainprocgen.common.policy import CategoricalPolicy
+from trainprocgen.common.storage import Storage
+from trainprocgen.common.logger import Logger
 
 if __name__ == '__main__':
     min_n_rounds = EnvironmentParameter(name='min_n_rounds', initial_bounds=(5,5), clip_bounds=(1,10), delta=1, discrete=True) 
@@ -37,3 +41,53 @@ if __name__ == '__main__':
                                                                             experiment_dir = None,
                                                                             eval_config = eval_config,
                                                                             n_training_envs = 8)
+    
+    print(training_env)
+    # print(initial_domain_config)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    observation_space = training_env.observation_space
+    observation_shape = observation_space.shape
+    in_channels = observation_shape[0]
+    action_space = training_env.action_space
+    
+    model = ImpalaModel(in_channels=in_channels, input_shape=observation_shape)
+    action_size = action_space.n
+    recurrent = True
+    policy = CategoricalPolicy(model, recurrent, action_size)
+    policy.to(device)
+    
+    logger = Logger(n_envs=8, logdir='./log')
+    
+    hidden_state_size = model.output_dim
+    storage = Storage(observation_shape, hidden_state_size, num_steps=128, num_envs=8, device=device)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    n_checkpoints = 10
+    ppo_adr = PPOADR(training_env,
+                    initial_domain_config,
+                    evaluation_envs,
+                    policy,
+                    logger,
+                    storage,
+                    device,
+                    n_checkpoints,
+                    n_steps=128,
+                    n_envs=8,
+                    epoch=3,
+                    mini_batch_per_epoch=8,
+                    mini_batch_size=32 * 8,
+                    gamma=0.99,
+                    lmbda=0.95,
+                    learning_rate=2.5e-4,
+                    grad_clip_norm=0.5,
+                    eps_clip=0.2,
+                    value_coef=0.5,
+                    entropy_coef=0.01,
+                    normalize_adv=True,
+                    normalize_rew=True,
+                    use_gae=False,
+                    adr_prob = 0.5,
+                    performance_thresholds = (2.5, 8.)
+                    )
+    
+    ppo_adr.train(1000)

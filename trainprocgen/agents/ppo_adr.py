@@ -108,7 +108,7 @@ class EvaluationEnvironment:
         self._boundary_config.to_json(self._boundary_config_path)
 
         # Initialize the environment
-        self._env = gym.make('procgen:' + self._boundary_config.game, domain_config_path=str(self._boundary_config_path))
+        self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0', domain_config_path=str(self._boundary_config_path))
 
         # Initialize the performance buffers
         self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
@@ -301,9 +301,9 @@ class PPOADR(PPO):
         self._adr_prob = adr_prob
         self._performance_thresholds = performance_thresholds
 
-        self._obs = None
-        self._hidden_state = None
-        self._done = None
+        self._obs = training_env.reset()
+        self._hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
+        self._done = np.zeros(self.n_envs)
 
     def _generate_training_data(self):
         for _ in range(self.n_steps):
@@ -317,7 +317,7 @@ class PPOADR(PPO):
 
     def _evaluate_performance(self):
         # Randomly select a parameter to boundary sample
-        param_idx = random.randint(self._n_tunable_params)
+        param_idx = random.randint(0, self._n_tunable_params)
         param_name = self._tunable_params[param_idx]
 
         # Get the environment for the selected parameter then evaluate the policy within it. This will boundary sample
@@ -352,7 +352,7 @@ class PPOADR(PPO):
             self.policy.eval()
 
             x = random.uniform(0., 1.)
-            if x < self._adr_prob and self._hidden_state:
+            if x < self._adr_prob:
                 self._evaluate_performance()
             else:
                 self._generate_training_data()
