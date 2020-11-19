@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import gym
 from gym import spaces
+import gym3
 import time
 from collections import deque
 import torch
@@ -153,11 +154,13 @@ class VecEnvWrapper(VecEnv):
     of environments at once.
     """
 
+    venv: gym3.ToBaselinesVecEnv
+
     def __init__(self, venv, observation_space=None, action_space=None):
         self.venv = venv
         super().__init__(num_envs=venv.num_envs,
-                        observation_space=observation_space or venv.observation_space,
-                        action_space=action_space or venv.action_space)
+                         observation_space=observation_space or venv.observation_space,
+                         action_space=action_space or venv.action_space)
 
     def step_async(self, actions):
         self.venv.step_async(actions)
@@ -191,6 +194,7 @@ class VecEnvObservationWrapper(VecEnvWrapper):
         pass
 
     def reset(self):
+        self.venv.step(np.array([-1] * self.num_envs))
         obs = self.venv.reset()
         return self.process(obs)
 
@@ -260,12 +264,13 @@ class VecFrameStack(VecEnvWrapper):
         self.stackedobs[...] = 0
         self.stackedobs[..., -obs.shape[-1]:] = obs
         return self.stackedobs
-    
+
+
 class VecExtractDictObs(VecEnvObservationWrapper):
     def __init__(self, venv, key):
         self.key = key
         super().__init__(venv=venv,
-            observation_space=venv.observation_space.spaces[self.key])
+                         observation_space=venv.observation_space.spaces[self.key])
 
     def process(self, obs):
         return obs[self.key]

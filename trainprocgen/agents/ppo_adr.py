@@ -110,8 +110,8 @@ class EvaluationEnvironment:
         # Initialize the environment
         # self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0', domain_config_path=str(self._boundary_config_path))
         self._env = ProcgenEnv(num_envs=1,
-                              env_name=str(self._boundary_config.game),
-                              domain_config_path=str(self._boundary_config_path))
+                               env_name=str(self._boundary_config.game),
+                               domain_config_path=str(self._boundary_config_path))
         self._env = VecExtractDictObs(self._env, "rgb")
         self._env = TransposeFrame(self._env)
         self._env = ScaledFloatFrame(self._env)
@@ -176,7 +176,7 @@ class EvaluationEnvironment:
     def _predict(policy, obs, hidden_state, done):
         with torch.no_grad():
             obs = torch.FloatTensor(obs)
-            hidden_state = torch.FloatTensor(hidden_state)
+            hidden_state = torch.FloatTensor(hidden_state).unsqueeze(dim=0)
             mask = torch.FloatTensor(1 - done)
             dist, value, hidden_state = policy(obs, hidden_state, mask)
             act = dist.sample()
@@ -186,8 +186,6 @@ class EvaluationEnvironment:
 
     def _generate_trajectories(self, policy: CategoricalPolicy, hidden_state: np.ndarray, buffer: PerformanceBuffer):
         obs = self._env.reset()
-        print(f'obs shape: {obs.shape}')
-        # obs = torch.unsqueeze(obs, 0)
         rewards = []
         last_steps = []
         for _ in range(self._eval_config.n_trajectories):
@@ -324,7 +322,7 @@ class PPOADR(PPO):
 
     def _evaluate_performance(self):
         # Randomly select a parameter to boundary sample
-        param_idx = random.randint(0, self._n_tunable_params)
+        param_idx = random.randint(0, self._n_tunable_params - 1)
         param_name = self._tunable_params[param_idx]
 
         # Get the environment for the selected parameter then evaluate the policy within it. This will boundary sample
