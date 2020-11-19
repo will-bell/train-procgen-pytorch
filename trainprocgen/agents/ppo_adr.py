@@ -90,7 +90,7 @@ class EvaluationEnvironment:
     _upper_performance_buffer: PerformanceBuffer
     _lower_performance_buffer: PerformanceBuffer
 
-    def __init__(self, env_parameter: EnvironmentParameter, train_config_path: str, eval_config: EvaluationConfig = None):
+    def __init__(self, env_parameter: EnvironmentParameter, train_config_path: str, eval_config: EvaluationConfig = None, device = None):
         self._env_parameter = env_parameter
         self._param_name = self._env_parameter.name
         self._eval_config = eval_config if eval_config is not None else EvaluationConfig()
@@ -117,6 +117,8 @@ class EvaluationEnvironment:
         self._env = ScaledFloatFrame(self._env)
         # Initialize the performance buffers
         self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
+        
+        self.device = device
 
     def evaluate_performance(self, policy: CategoricalPolicy, hidden_state: np.ndarray) -> Optional[Tuple[float, bool]]:
         """Main method for running the ADR algorithm
@@ -173,11 +175,11 @@ class EvaluationEnvironment:
         return self._env_parameter.upper_bound
 
     @staticmethod
-    def _predict(policy, obs, hidden_state, done):
+    def _predict(policy, obs, hidden_state, done, device):
         with torch.no_grad():
-            obs = torch.FloatTensor(obs)
-            hidden_state = torch.FloatTensor(hidden_state)
-            mask = torch.FloatTensor(1 - done)
+            obs = torch.FloatTensor(obs).to(device)
+            hidden_state = torch.FloatTensor(hidden_state).to(device)
+            mask = torch.FloatTensor(1 - done).to(device)
             dist, value, hidden_state = policy(obs, hidden_state, mask)
             act = dist.sample()
             log_prob_act = dist.log_prob(act)
@@ -193,7 +195,7 @@ class EvaluationEnvironment:
         for _ in range(self._eval_config.n_trajectories):
             done = False
             while not done:
-                act, _, _, next_hidden_state = self._predict(policy, obs, hidden_state, done)
+                act, _, _, next_hidden_state = self._predict(policy, obs, hidden_state, done, self.device)
                 next_obs, rew, done, _ = self._env.step(act)
                 obs = next_obs
                 hidden_state = next_hidden_state
@@ -227,7 +229,8 @@ def make_environments(env_name: str,
                       tunable_parameters: List[EnvironmentParameter] = None,
                       experiment_dir: Union[pathlib.Path, str] = None,
                       eval_config: EvaluationConfig = None,
-                      n_training_envs: int = 8):
+                      n_training_envs: int = 8,
+                      device = None):
 
     if initial_domain_config is None:
         try:
@@ -258,7 +261,7 @@ def make_environments(env_name: str,
 
     evaluation_envs = {}
     for param in tunable_parameters:
-        evaluation_envs[param] = EvaluationEnvironment(param, train_config_path, eval_config)
+        evaluation_envs[param] = EvaluationEnvironment(param, train_config_path, eval_config, device)
 
     return training_env, initial_domain_config, evaluation_envs
 
@@ -316,7 +319,8 @@ class PPOADR(PPO):
         for _ in range(self.n_steps):
             act, log_prob_act, value, next_hidden_state = self.predict(self._obs, self._hidden_state, self._done)
             next_obs, rew, done, info = self.env.step(act)
-            self.storage.store(self._obs, self._hidden_state, act, rew, self._done, info, log_prob_act, value)
+            # print(done)
+            self.storage.store(self._obs, self._hidden_state, act, rew, done, info, log_prob_act, value)
             self._obs = next_obs
             self._hidden_state = next_hidden_state
         _, _, last_val, self._hidden_state = self.predict(self._obs, self._hidden_state, self._done)
@@ -384,5 +388,4 @@ class PPOADR(PPO):
                 torch.save({'state_dict': self.policy.state_dict()},
                            self.logger.logdir + '/model_' + str(self.t) + '.pth')
                 checkpoint_cnt += 1
-
         # self.env.close()
