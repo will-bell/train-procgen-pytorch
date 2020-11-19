@@ -48,8 +48,10 @@ if __name__ == '__main__':
     print(f'in channels: {in_channels}')
     model = ImpalaModel(in_channels=in_channels, input_shape=observation_shape).to(device)
     action_size = action_space.n
-    recurrent = False
+    recurrent = True
     policy = CategoricalPolicy(model, recurrent, action_size)
+    if recurrent:
+        policy.gru.to(device)
     policy.to(device)
     
     logger = Logger(n_envs=8, logdir='./log')
