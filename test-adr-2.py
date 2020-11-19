@@ -44,7 +44,7 @@ if __name__ == '__main__':
 
     in_channels = observation_shape[0]
     action_space = training_env.action_space
-    
+
     print(f'in channels: {in_channels}')
     model = ImpalaModel(in_channels=in_channels, input_shape=observation_shape).to(device)
     action_size = action_space.n
@@ -53,7 +53,7 @@ if __name__ == '__main__':
     policy.to(device)
     
     logger = Logger(n_envs=8, logdir='./log')
-    
+
     hidden_state_size = model.output_dim
     storage = Storage(observation_shape, hidden_state_size, num_steps=num_steps, num_envs=8, device=device)
     n_checkpoints = 5

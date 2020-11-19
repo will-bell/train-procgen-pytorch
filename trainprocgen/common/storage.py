@@ -117,6 +117,9 @@ class Storage:
                     return_batch, adv_batch
 
     def fetch_log_data(self):
+        if not len(self.info_batch):
+            return None, None
+
         if 'env_reward' in self.info_batch[0][0]:
             rew_batch = []
             for step in range(self.num_steps):
