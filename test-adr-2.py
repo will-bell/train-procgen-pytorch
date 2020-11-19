@@ -4,7 +4,11 @@ from trainprocgen.common.policy import CategoricalPolicy
 from trainprocgen.common.storage import Storage
 from trainprocgen.common.logger import Logger
 
+import torch
+
 if __name__ == '__main__':
+    torch.set_num_threads(1)
+    
     n_rounds = EnvironmentParameter(name='n_rounds', initial_bounds=(5,5), clip_bounds=(1,10), delta=1, discrete=True) 
     n_barriers = EnvironmentParameter(name='n_barriers', initial_bounds=(1, 1), clip_bounds=(0,25), delta=1, discrete=True)
     boss_round_health = EnvironmentParameter(name='boss_round_health', initial_bounds=(2,2), clip_bounds=(1,25), delta=1, discrete=True) 
@@ -54,7 +58,8 @@ if __name__ == '__main__':
         policy.gru.to(device)
     policy.to(device)
     
-    logger = Logger(n_envs=8, logdir='./log')
+    n_envs = 8
+    logger = Logger(n_envs=n_envs, logdir='./log')
 
     hidden_state_size = model.output_dim
     storage = Storage(observation_shape, hidden_state_size, num_steps=num_steps, num_envs=8, device=device)
@@ -68,7 +73,7 @@ if __name__ == '__main__':
                     device,
                     n_checkpoints,
                     n_steps=num_steps,
-                    n_envs=8,
+                    n_envs=n_envs,
                     epoch=3,
                     mini_batch_per_epoch=8,
                     mini_batch_size=32 * 8,
@@ -86,4 +91,4 @@ if __name__ == '__main__':
                     performance_thresholds = (2.5, 8.)
                     )
     
-    ppo_adr.train(20000)
+    ppo_adr.train(200000)

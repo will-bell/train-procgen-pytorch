@@ -32,16 +32,16 @@ class EnvironmentParameter:
         self.delta = delta
 
     def increase_lower_bound(self):
-        self.lower_bound = np.min(self.lower_bound + self.delta, self.upper_bound)
+        self.lower_bound = min(self.lower_bound + self.delta, self.upper_bound)
 
     def decrease_lower_bound(self):
-        self.lower_bound = np.max(self.lower_bound - self.delta, self.clip_lower_bound)
+        self.lower_bound = max(self.lower_bound - self.delta, self.clip_lower_bound)
 
     def increase_upper_bound(self):
-        self.upper_bound = np.min(self.upper_bound + self.delta, self.clip_upper_bound)
+        self.upper_bound = min(self.upper_bound + self.delta, self.clip_upper_bound)
 
     def decrease_upper_bound(self):
-        self.upper_bound = np.max(self.upper_bound - self.delta, self.lower_bound)
+        self.upper_bound = max(self.upper_bound - self.delta, self.lower_bound)
 
 
 class PerformanceBuffer:
@@ -193,10 +193,14 @@ class EvaluationEnvironment:
         rewards = []
         last_steps = []
         for _ in range(self._eval_config.n_trajectories):
-            done = False
-            while not done:
+            # done = False
+            # Single environment
+            done = np.zeros(1)
+            # Index at only environment
+            while not done[0]:
                 act, _, _, next_hidden_state = self._predict(policy, obs, done)
                 next_obs, rew, done, _ = self._env.step(act)
+                # print(done)
                 obs = next_obs
                 self.hidden_state = next_hidden_state
 
@@ -249,7 +253,7 @@ def make_environments(env_name: str,
 
     initial_domain_config.to_json(train_config_path)
 
-    torch.set_num_threads(1)
+    # torch.set_num_threads(1)
     training_env = ProcgenEnv(num_envs=n_training_envs,
                               env_name=env_name,
                               domain_config_path=str(train_config_path))
@@ -369,24 +373,24 @@ class PPOADR(PPO):
             else:
                 self._generate_training_data()
 
-            # Compute advantage estimates
-            self.storage.compute_estimates(self.gamma, self.lmbda, self.use_gae, self.normalize_adv)
+                # Compute advantage estimates
+                self.storage.compute_estimates(self.gamma, self.lmbda, self.use_gae, self.normalize_adv)
 
-            # Update policy & values
-            summary = self.update_policy()
+                # Update policy & values
+                summary = self.update_policy()
 
-            # Log the training-procedure
-            self.t += self.n_steps * self.n_envs
-            rew_batch, done_batch = self.storage.fetch_log_data()
-            if rew_batch is not None and done_batch is not None:
-                self.logger.feed(rew_batch, done_batch)
-                self.logger.write_summary(summary)
-                self.logger.dump()
-                self.optimizer = adjust_lr(self.optimizer, self.learning_rate, self.t, num_timesteps)
+                # Log the training-procedure
+                self.t += self.n_steps * self.n_envs
+                rew_batch, done_batch = self.storage.fetch_log_data()
+                if rew_batch is not None and done_batch is not None:
+                    self.logger.feed(rew_batch, done_batch)
+                    self.logger.write_summary(summary)
+                    self.logger.dump()
+                    self.optimizer = adjust_lr(self.optimizer, self.learning_rate, self.t, num_timesteps)
 
-                # Save the model
-                if self.t > ((checkpoint_cnt + 1) * save_every):
-                    torch.save({'state_dict': self.policy.state_dict()},
-                            self.logger.logdir + '/model_' + str(self.t) + '.pth')
-                    checkpoint_cnt += 1
+                    # Save the model
+                    if self.t > ((checkpoint_cnt + 1) * save_every):
+                        torch.save({'state_dict': self.policy.state_dict()},
+                                self.logger.logdir + '/model_' + str(self.t) + '.pth')
+                        checkpoint_cnt += 1
         # self.env.close()
