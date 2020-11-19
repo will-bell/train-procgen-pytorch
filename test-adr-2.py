@@ -77,7 +77,7 @@ if __name__ == '__main__':
                      normalize_adv=True,
                      normalize_rew=True,
                      use_gae=False,
-                     adr_prob=0.5,
+                     adr_prob=1.0,
                      performance_thresholds=(2.5, 8.)
                      )
 

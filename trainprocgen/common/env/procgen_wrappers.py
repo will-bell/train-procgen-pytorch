@@ -182,6 +182,9 @@ class VecEnvWrapper(VecEnv):
     def get_images(self):
         return self.venv.get_images()
 
+    def observe(self):
+        return self.venv.env.observe()
+
     def __getattr__(self, name):
         if name.startswith('_'):
             raise AttributeError("attempted to get missing private attribute '{}'".format(name))

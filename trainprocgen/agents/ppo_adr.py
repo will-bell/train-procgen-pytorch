@@ -108,22 +108,25 @@ class EvaluationEnvironment:
         self._boundary_config.to_json(self._boundary_config_path)
 
         # Initialize the environment
-        # self._env = gym.make(f'procgen:procgen-{str(self._boundary_config.game)}-v0', domain_config_path=str(self._boundary_config_path))
         self._env = ProcgenEnv(num_envs=1,
                                env_name=str(self._boundary_config.game),
                                domain_config_path=str(self._boundary_config_path))
         self._env = VecExtractDictObs(self._env, "rgb")
         self._env = TransposeFrame(self._env)
         self._env = ScaledFloatFrame(self._env)
+
         # Initialize the performance buffers
         self._upper_performance_buffer, self._lower_performance_buffer = PerformanceBuffer(), PerformanceBuffer()
 
-    def evaluate_performance(self, policy: CategoricalPolicy, hidden_state: np.ndarray) -> Optional[Tuple[float, bool]]:
+        # The hidden state will have to be initialized from the outside for now. At the top of PPOADR.train, we loop
+        # through the evaluation environments and set the hidden state with an array of zeros.
+        self.hidden_state = None
+
+    def evaluate_performance(self, policy: CategoricalPolicy) -> Optional[Tuple[float, bool]]:
         """Main method for running the ADR algorithm
 
         Args:
             policy:
-            hidden_state:
 
         Returns:
 
@@ -146,7 +149,7 @@ class EvaluationEnvironment:
         updated_params['max_' + self._param_name] = value
         self._boundary_config.update_parameters(updated_params, cache=False)
 
-        self._generate_trajectories(policy, hidden_state, buffer)
+        self._generate_trajectories(policy, buffer)
 
         if buffer.is_full(self._eval_config.max_buffer_size):
             performance = buffer.calculate_average_performance()
@@ -172,11 +175,10 @@ class EvaluationEnvironment:
 
         return self._env_parameter.upper_bound
 
-    @staticmethod
-    def _predict(policy, obs, hidden_state, done):
+    def _predict(self, policy, obs, done):
         with torch.no_grad():
             obs = torch.FloatTensor(obs)
-            hidden_state = torch.FloatTensor(hidden_state).unsqueeze(dim=0)
+            hidden_state = torch.FloatTensor(self.hidden_state)
             mask = torch.FloatTensor(1 - done)
             dist, value, hidden_state = policy(obs, hidden_state, mask)
             act = dist.sample()
@@ -184,22 +186,20 @@ class EvaluationEnvironment:
 
         return act.cpu().numpy(), log_prob_act.cpu().numpy(), value.cpu().numpy(), hidden_state.cpu().numpy()
 
-    def _generate_trajectories(self, policy: CategoricalPolicy, hidden_state: np.ndarray, buffer: PerformanceBuffer):
+    def _generate_trajectories(self, policy: CategoricalPolicy, buffer: PerformanceBuffer):
         obs = self._env.reset()
         rewards = []
         last_steps = []
         for _ in range(self._eval_config.n_trajectories):
             done = False
             while not done:
-                act, _, _, next_hidden_state = self._predict(policy, obs, hidden_state, done)
+                act, _, _, next_hidden_state = self._predict(policy, obs, done)
                 next_obs, rew, done, _ = self._env.step(act)
                 obs = next_obs
-                hidden_state = next_hidden_state
+                self.hidden_state = next_hidden_state
 
                 rewards.append(rew)
                 last_steps.append(done)
-
-            obs = self._env.reset()
 
         mean_return = self._calculate_average_return(rewards, last_steps)
         buffer.push_back(mean_return)
@@ -329,7 +329,7 @@ class PPOADR(PPO):
         # the selected parameter and generate a number of trajectories with the upper/lower boundary to calculate its
         # performance in the environment.
         evaluation_env = self._evaluation_envs[param_name]
-        info = evaluation_env.evaluate_performance(self.policy, self._hidden_state)
+        info = evaluation_env.evaluate_performance(self.policy)
 
         # If we get something back, then the performance buffer for either the lower or upper boundary of the parameter
         # is filled. Update the parameter according to the set thresholds.
@@ -348,8 +348,10 @@ class PPOADR(PPO):
     def train(self, num_timesteps: int):
         save_every = num_timesteps // self.num_checkpoints
         checkpoint_cnt = 0
-        self._obs = self.env.reset()
+        self._obs = self.env.observe()
         self._hidden_state = np.zeros((self.n_envs, self.storage.hidden_state_size))
+        for eval_env in self._evaluation_envs.values():
+            eval_env.hidden_state = np.zeros((1, self.storage.hidden_state_size))
         self._done = np.zeros(self.n_envs)
         self.storage.reset()
 
