@@ -263,7 +263,7 @@ def make_environments(env_name: str,
 
     evaluation_envs = {}
     for param in tunable_parameters:
-        evaluation_envs[param] = EvaluationEnvironment(param, train_config_path, eval_config, device)
+        evaluation_envs[param.name] = EvaluationEnvironment(param, train_config_path, eval_config, device)
 
     return training_env, initial_domain_config, evaluation_envs
 

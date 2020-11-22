@@ -10,7 +10,7 @@ if __name__ == '__main__':
     torch.set_num_threads(1)
     
     n_rounds = EnvironmentParameter(name='n_rounds', initial_bounds=(5,5), clip_bounds=(1,10), delta=1, discrete=True) 
-    n_barriers = EnvironmentParameter(name='n_barriers', initial_bounds=(1, 1), clip_bounds=(0,25), delta=1, discrete=True)
+    n_barriers = EnvironmentParameter(name='n_barriers', initial_bounds=(1, 1), clip_bounds=(1,25), delta=1, discrete=True)
     boss_round_health = EnvironmentParameter(name='boss_round_health', initial_bounds=(2,2), clip_bounds=(1,25), delta=1, discrete=True) 
     boss_invulnerable_duration = EnvironmentParameter(name='boss_invulnerable_duration', initial_bounds=(3,3), clip_bounds=(0,25), delta=1, discrete=True) 
     n_boss_attack_modes = EnvironmentParameter(name='n_boss_attack_modes', initial_bounds=(4,4), clip_bounds=(1,25), delta=1, discrete=False) 
@@ -27,7 +27,7 @@ if __name__ == '__main__':
                 boss_bullet_velocity, 
                 boss_rand_fire_prob, 
                 boss_scale]
-    
+    n_envs = 64
     num_steps = 256
     eval_config = EvaluationConfig(n_trajectories=100, max_buffer_size=10)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -36,7 +36,7 @@ if __name__ == '__main__':
                                                                             tunable_parameters= tunable_parameters,
                                                                             experiment_dir = None,
                                                                             eval_config = eval_config,
-                                                                            n_training_envs = 8,
+                                                                            n_training_envs = n_envs,
                                                                             device = device)
     
     print(training_env)
@@ -58,12 +58,11 @@ if __name__ == '__main__':
         policy.gru.to(device)
     policy.to(device)
     
-    n_envs = 8
     logger = Logger(n_envs=n_envs, logdir='./log')
 
     hidden_state_size = model.output_dim
-    storage = Storage(observation_shape, hidden_state_size, num_steps=num_steps, num_envs=8, device=device)
-    n_checkpoints = 5
+    storage = Storage(observation_shape, hidden_state_size, num_steps=num_steps, num_envs=n_envs, device=device)
+    n_checkpoints = 100
     ppo_adr = PPOADR(training_env,
                     initial_domain_config,
                     evaluation_envs,
@@ -91,4 +90,4 @@ if __name__ == '__main__':
                     performance_thresholds = (2.5, 8.)
                     )
     
-    ppo_adr.train(200000)
+    ppo_adr.train(200000000)
