@@ -29,7 +29,7 @@ if __name__ == '__main__':
                 boss_scale]
     n_envs = 64
     num_steps = 256
-    eval_config = EvaluationConfig(n_trajectories=100, max_buffer_size=10)
+    eval_config = EvaluationConfig(n_trajectories=100, max_buffer_size=100)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     training_env, initial_domain_config, evaluation_envs = make_environments(env_name = 'dc_bossfight',
                                                                             initial_domain_config = None,
@@ -90,4 +90,4 @@ if __name__ == '__main__':
                     performance_thresholds = (2.5, 8.)
                     )
     
-    ppo_adr.train(200000000)
+    ppo_adr.train(20000000)

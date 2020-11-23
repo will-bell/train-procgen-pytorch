@@ -190,9 +190,10 @@ class EvaluationEnvironment:
 
     def _generate_trajectories(self, policy: CategoricalPolicy, buffer: PerformanceBuffer):
         obs = self._env.reset()
-        rewards = []
-        last_steps = []
+
         for _ in range(self._eval_config.n_trajectories):
+            rewards = []
+            last_steps = []
             # done = False
             # Single environment
             done = np.zeros(1)
@@ -207,8 +208,8 @@ class EvaluationEnvironment:
                 rewards.append(rew)
                 last_steps.append(done)
 
-        mean_return = self._calculate_average_return(rewards, last_steps)
-        buffer.push_back(mean_return)
+            mean_return = self._calculate_average_return(rewards, last_steps)
+            buffer.push_back(mean_return)
 
     @staticmethod
     def _calculate_average_return(rewards: List[float], last_steps: List[bool]) -> float:
